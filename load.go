@@ -1,35 +1,37 @@
 package main
 
-import (
-    "fmt"
-    "io"
-    "os"
-	"bufio"
-    "image"
-    "image/color"
-	"image/png"
+import "gon/neuralnet"
 
-    "gorgonia.org/tensor"
+import (
+	"bufio"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"os"
+
+	"gorgonia.org/tensor"
 )
 
 const (
-    ImageSize = 32 * 32 * 3
-    LabelSize = 1
-	Row = LabelSize + ImageSize
-	Batch = 10000
+	ImageSize = 32 * 32 * 3
+	LabelSize = 1
+	Row       = LabelSize + ImageSize
+	Batch     = 10000
 )
 
 func loadCIFAR10(filePath string) ([]tensor.Tensor, []int, error) {
-    file, err := os.Open(filePath)
-    if err != nil {
-        return nil, nil, err
-    }
-    defer file.Close()
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
 
 	images := make([]tensor.Tensor, 0)
 	labels := make([]int, 0)
 	for {
-		data := make([]byte, Batch * Row)
+		data := make([]byte, Batch*Row)
 		_, err := io.ReadFull(file, data)
 		if err != nil {
 			if err == io.EOF {
@@ -38,10 +40,10 @@ func loadCIFAR10(filePath string) ([]tensor.Tensor, []int, error) {
 			return nil, nil, err
 		}
 		for i := 0; i < Batch; i++ {
-			row := data[i * Row: (i + 1)* Row]
+			row := data[i*Row : (i+1)*Row]
 			labels = append(labels, int(row[0]))
 
-			img := row[LabelSize : LabelSize + ImageSize]
+			img := row[LabelSize : LabelSize+ImageSize]
 			norm := make([]float32, ImageSize)
 			for i := 1; i < len(img); i++ {
 				norm[i] = float32(img[i]) / 255.0
@@ -51,26 +53,26 @@ func loadCIFAR10(filePath string) ([]tensor.Tensor, []int, error) {
 		}
 	}
 
-    return images, labels, nil
+	return images, labels, nil
 }
 
 func readLabels() ([]string, error) {
 	file, err := os.Open("data/batches.meta.txt")
-    if err != nil {
-        fmt.Println("Error opening file:", err)
-        return nil, err
-    }
-    defer file.Close()
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return nil, err
+	}
+	defer file.Close()
 
-    scanner := bufio.NewScanner(file)
-    var words []string
-    for scanner.Scan() {
-        words = append(words, scanner.Text())
-    }
+	scanner := bufio.NewScanner(file)
+	var words []string
+	for scanner.Scan() {
+		words = append(words, scanner.Text())
+	}
 
-    if err := scanner.Err(); err != nil {
-    	fmt.Println("Error reading file:", err)
-    }
+	if err := scanner.Err(); err != nil {
+		fmt.Println("Error reading file:", err)
+	}
 	return words, nil
 }
 
@@ -105,28 +107,36 @@ func saveImg(ts []tensor.Tensor, ws []string, ls []int, i int) {
 }
 
 func oneHotEncode(labels []int, numClasses int) tensor.Tensor {
-    numLabels := len(labels)
-    norm := make([]float32, numLabels * numClasses)
+	numLabels := len(labels)
+	norm := make([]float32, numLabels*numClasses)
 
-    for i, label := range labels {
-        norm[i * numClasses + label] = 1.0
-    }
+	for i, label := range labels {
+		norm[i*numClasses+label] = 1.0
+	}
 
-    return tensor.New(tensor.Of(tensor.Float32), tensor.WithShape(numLabels, numClasses), tensor.WithBacking(norm))
+	return tensor.New(tensor.Of(tensor.Float32), tensor.WithShape(numLabels, numClasses), tensor.WithBacking(norm))
+}
+
+func load() {
+	images, labels, err := loadCIFAR10("data/data_batch_1.bin")
+	if err != nil {
+		fmt.Println("Error loading CIFAR-10:", err)
+		return
+	}
+	words, err := readLabels()
+	if err != nil {
+		fmt.Println("Error loading labels:", err)
+		return
+	}
+	saveImg(images, words, labels, 3)
+	out := oneHotEncode(labels, 10)
+	fmt.Println(out)
 }
 
 func main() {
-    images, labels, err := loadCIFAR10("data/data_batch_1.bin")
-    if err != nil {
-        fmt.Println("Error loading CIFAR-10:", err)
-        return
-    }
-	words, err := readLabels()
-	if err != nil {
-        fmt.Println("Error loading labels:", err)
-        return
-    }
-	saveImg(images, words, labels, 3)
-	out := oneHotEncode(labels, 10)
-	fmt.Println(oneHotLabels)
+	// 2 layers
+	nn := neuralnet.NewNeuralNetwork([]int{2}, 1)
+	input := []float32{1.0}
+	output := nn.FeedForward(input)
+	fmt.Println("Output:", output)
 }
