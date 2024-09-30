@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 
-	"gorgonia.org/tensor"
+	"gonum.org/v1/gonum/mat"
 )
 
 const (
@@ -21,14 +21,14 @@ const (
 	Batch     = 10000
 )
 
-func loadCIFAR10(filePath string) ([]tensor.Tensor, []int, error) {
+func loadCIFAR10(filePath string) ([]mat.Dense, []int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer file.Close()
 
-	images := make([]tensor.Tensor, 0)
+	images := make([]mat.Dense, 0)
 	labels := make([]int, 0)
 	for {
 		data := make([]byte, Batch*Row)
@@ -48,7 +48,7 @@ func loadCIFAR10(filePath string) ([]tensor.Tensor, []int, error) {
 			for i := 1; i < len(img); i++ {
 				norm[i] = float32(img[i]) / 255.0
 			}
-			t := tensor.New(tensor.Of(tensor.Float32), tensor.WithShape(3, 32, 32), tensor.WithBacking(norm))
+			t := mat.NewDense(3, 32, 32, norm)
 			images = append(images, t)
 		}
 	}
@@ -76,7 +76,7 @@ func readLabels() ([]string, error) {
 	return words, nil
 }
 
-func saveImg(ts []tensor.Tensor, ws []string, ls []int, i int) {
+func saveImg(ts []mat.Dense, ws []string, ls []int, i int) {
 	t := ts[i]
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
@@ -106,7 +106,7 @@ func saveImg(ts []tensor.Tensor, ws []string, ls []int, i int) {
 	println(fmt.Sprintf("Image saved as %s", label))
 }
 
-func oneHotEncode(labels []int, numClasses int) tensor.Tensor {
+func oneHotEncode(labels []int, numClasses int) mat.Dense {
 	numLabels := len(labels)
 	norm := make([]float32, numLabels*numClasses)
 
@@ -114,7 +114,7 @@ func oneHotEncode(labels []int, numClasses int) tensor.Tensor {
 		norm[i*numClasses+label] = 1.0
 	}
 
-	return tensor.New(tensor.Of(tensor.Float32), tensor.WithShape(numLabels, numClasses), tensor.WithBacking(norm))
+	return mat.NewDense(numLabels, numClasses, norm)
 }
 
 func load() {
