@@ -111,7 +111,7 @@ func oneHotEncode(labels []int, numClasses int) mat.Dense {
 	norm := make([]float32, numLabels*numClasses)
 
 	for i, label := range labels {
-		norm[i*numClasses+label] = 1.0
+		norm[i * numClasses + label] = 1.0
 	}
 
 	return mat.NewDense(numLabels, numClasses, norm)

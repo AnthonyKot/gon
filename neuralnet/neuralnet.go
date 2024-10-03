@@ -20,7 +20,7 @@ type Neuron struct {
 
 type Layer struct {
         neurons []*Neuron
-        deltas  *mat.Dense // Added deltas field
+        deltas  []float32
 }
 
 // Represents of the simlest NN.
@@ -118,58 +118,61 @@ func (nn *NeuralNetwork) FeedForward(input []float32) {
 
 func (nn *NeuralNetwork) Backpropagate(target *mat.Dense) {
         outputLayer := nn.layers[len(nn.layers)-1]
-        outputLayer.deltas = ConvertOutputToDense(outputLayer.neurons)
+        outputLayer.deltas = make([]float32, len(outputLayer.neurons))
         for i, neuron := range outputLayer.neurons {
-                outputLayer.deltas.Set(i, 0, float64(neuron.output) - outputLayer.deltas.At(i, 1))
+                outputLayer.deltas[i] = float32(target.At(0, i)) - neuron.output
         }
 
         for i := len(nn.layers) - 2; i >= 0; i-- {
+                // N neurons
+                previousLayer := nn.layers[i + 1]
+                n := len(previousLayer.neurons)
+                // M neurons
                 layer := nn.layers[i]
-                layer.deltas = ConvertOutputToDense(layer.neurons)
-                previouseLayer := nn.layers[i+1]
-                weights := ConvertWeightsDense(previouseLayer.neurons)
-                bias := ConvertBiasToDense(previouseLayer.neurons)
+                m := len(layer.neurons)
 
-                jac, err := fd.Jacobian(func(x []float64) []float64 {
-                        previouseLayerOutputs := weights.Mul(mat.NewDense(previouseLayer.weights.Rows(), 1, x), nil)
-                        previouseLayerOutputs.Add(bias, previouseLayerOutputs)
-                        return previouseLayerOutputs.Raw()
-                }, layer.outputs.Raw())
-                if err != nil {
-                        panic(err)
+                // N * M
+                weights := ConvertWeightsDense(previousLayer.neurons)
+                // N * 1
+                bias := ConvertBiasToDense(previousLayer.neurons)
+
+                output := make([]float64, n)
+                for i, neuron := range previousLayer.neurons {
+                        output[i] = float64(neuron.output)
                 }
 
-                layer.deltas.Mul(jac.T(), nextLayer.deltas, layer.deltas)
-                layer.deltas.Apply(func(i, j int, v float64) float64 {
-                        return v * ReLUPrime(layer.outputs.At(i, j))
-                }, layer.deltas)
-        }
-}
+                jac := mat.NewDense(n, m, nil)
+                // Formula:    fd.Central ?
+                // Concurrent: true ?
+                fd.Jacobian(jac,
+                        func(next, prev []float64) {
+                                previousLayerOutputs := mat.NewDense(n, 1, nil)
+                                previousLayerOutputs.Mul(weights, mat.NewDense(m, 1, prev))
+                                previousLayerOutputs.Add(bias, previousLayerOutputs)
+                                for i, _ := range next {
+                                        next[i] = previousLayerOutputs.At(i, 1)
+                                }
+                        },
+                        output,
+                        &fd.JacobianSettings{
+                                Formula:    fd.Central,
+                                Concurrent: true,
+                        })
 
-func ConvertOutputToDense(neurons []*Neuron) *mat.Dense {
-        dense = mat.NewDense(len(neurons), 1, nil)
-        for i, neuron := range neurons {
-                for j, w := range neurons.weights {
-                        dense.Set(i, j, float64(neuron.output))
+                // [M * N] x [N * 1] => [M * 1]
+                rows, cols := jac.T().Dims()
+                deltas := mat.NewDense(rows, cols, nil)  // Ensure correct dimensions
+                deltas.Mul(jac.T(), ConvertDeltasToDense(previousLayer))
+
+                deltas.Apply(func(i, j int, v float64) float64 {
+                        return v * ReLUPrime(output[i])
+                }, deltas)
+
+                layer.deltas = make([]float32, m)
+                for i, _ := range layer.deltas {
+                        layer.deltas[i] = float32(deltas.At(i, 0))
                 }
         }
-        return dense
-}
-
-func ConvertWeightsDense(neurons []*Neuron) *mat.Dense {
-        dense = mat.NewDense(len(neurons), 1, nil)
-        for i, neuron := range neurons {
-                dense.Set(i, 0, float64(neuron.weights))
-        }
-        return dense
-}
-
-func ConvertBiasToDense(neurons []*Neuron) *mat.Dense {
-        dense = mat.NewDense(len(neurons), 1, nil)
-        for i, neuron := range neurons {
-                dense.Set(i, 0, float64(neuron.bias))
-        }
-        return dense
 }
 
 func (nn *NeuralNetwork) Train(trainingData [][]float32, expectedOutputs [][]float32, learningRate float32, epochs int) {
@@ -181,8 +184,46 @@ func (nn *NeuralNetwork) Train(trainingData [][]float32, expectedOutputs [][]flo
         }
 }
 
+// N number of 2nd layer neurons on M number of prev layer so N * M
+func ConvertWeightsDense(neurons []*Neuron) *mat.Dense {
+        n := len(neurons)
+        m := len(neurons[0].weights)
+	weights := make([]float64, n * m)
+
+	for i, neuron := range neurons {
+                for j, w := range neuron.weights {
+                        weights[i * n + j] = float64(w)
+                }
+	}
+
+	return mat.NewDense(n, m, weights)
+}
+
+func ConvertBiasToDense(neurons []*Neuron) *mat.Dense {
+        dense := mat.NewDense(len(neurons), 1, nil)
+        for i, neuron := range neurons {
+                dense.Set(i, 0, float64(neuron.bias))
+        }
+        return dense
+}
+
+func ConvertDeltasToDense(layer *Layer) *mat.Dense {
+        dense := mat.NewDense(len(layer.deltas), 1, nil)
+        for i, d := range layer.deltas {
+                dense.Set(i, 0, float64(d))
+        }
+        return dense
+}
+
 func ReLU(x float32) float32 {
         return float32(math.Max(float64(x), 0))
+}
+
+func ReLUPrime(x float64) float64 {
+        if x > 0 {
+                return 1
+        }
+        return 0
 }
 
 func Softmax(output []float32) []float32 {
