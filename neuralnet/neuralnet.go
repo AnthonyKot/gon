@@ -80,7 +80,7 @@ func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunc
         }
 }
 
-func (nn *NeuralNetwork) FeedForward(input []float32) {
+func (nn *NeuralNetwork) FeedForward(input []float32) []float32 {
         if len(input) != len(nn.layers[0].neurons) {
                 panic("Input size mismatch")
         }
@@ -114,6 +114,7 @@ func (nn *NeuralNetwork) FeedForward(input []float32) {
         for i, neuron := range outputLayer {
                 neuron.output = softmax[i]
         }
+        return Softmax(output)
 }
 
 func (nn *NeuralNetwork) Backpropagate(target *mat.Dense) {
