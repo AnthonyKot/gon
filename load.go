@@ -113,7 +113,7 @@ func saveImg(ts [][]mat.Dense, ws []string, ls []int, i int) {
 	println(fmt.Sprintf("Image saved as %s", label))
 }
 
-func oneHotEncode(labels []int, numClasses int) mat.Dense {
+func oneHotEncode(labels []int, numClasses int) *mat.Dense {
 	numLabels := len(labels)
 	norm := make([]float64, numLabels*numClasses)
 
@@ -121,7 +121,7 @@ func oneHotEncode(labels []int, numClasses int) mat.Dense {
 		norm[i * numClasses + label] = 1.0
 	}
 
-	return *mat.NewDense(numLabels, numClasses, norm)
+	return mat.NewDense(numLabels, numClasses, norm)
 }
 
 func load() {
@@ -141,9 +141,8 @@ func load() {
 }
 
 func main() {
-	// 2 layers
-	nn := neuralnet.NewNeuralNetwork([]int{2}, 1)
-	input := []float32{1.0}
-	output := nn.FeedForward(input)
-	fmt.Println("Output:", output)
+	// input layer + 1 hidden layer + output layer
+	nn := neuralnet.NewNeuralNetwork(1, []int{2}, 2)
+	nn.FeedForward([]float32{1.0})
+	fmt.Println("Output:", nn.CalculateLoss(mat.NewDense(2, 1, []float64{1.0, 0})))
 }

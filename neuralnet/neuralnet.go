@@ -3,7 +3,6 @@ package neuralnet
 import (
         "math"
         "math/rand"
-        "time"
 
         "gonum.org/v1/gonum/diff/fd"
         "gonum.org/v1/gonum/mat"
@@ -28,10 +27,12 @@ type NeuralNetwork struct {
         layers []*Layer
 }
 
-func NewNeuralNetwork(hidden []int, inputSize int) *NeuralNetwork {
-        rand.Seed(time.Now().UnixNano())
+func NewNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
+        rand.Seed(int64(NNSeed(inputSize, hidden, outputSize)))
+
         nn := &NeuralNetwork{
-                layers: make([]*Layer, len(hidden) + 1),
+                // input + hidden + output
+                layers: make([]*Layer, len(hidden) + 2),
         }
 
         first := &Layer{
@@ -67,24 +68,39 @@ func NewNeuralNetwork(hidden []int, inputSize int) *NeuralNetwork {
                 }
                 nn.layers[i + 1] = layer
         }
+        output := &Layer{
+                neurons: make([]*Neuron, outputSize),
+        }
+        for l := 0; l < outputSize; l++ {
+                output.neurons[l] = &Neuron{
+                        weights: make([]float32, outputSize),
+                        bias:    rand.Float32(),
+                        activation: ReLU,
+                }
+                // TODO: use gauss to init weights
+                for k := range output.neurons[l].weights {
+                        output.neurons[l].weights[k] = rand.Float32()
+                }
+        }
+        nn.layers[len(hidden) + 1] = output
         return nn
 }
 
 func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunction) {
-        if layerIndex < 0 || layerIndex >= len(nn.layers) {
-                panic("Invalid layer index")
-        }
-
         for _, neuron := range nn.layers[layerIndex].neurons {
                 neuron.activation = activation
         }
 }
 
-func (nn *NeuralNetwork) FeedForward(input []float32) []float32 {
-        if len(input) != len(nn.layers[0].neurons) {
-                panic("Input size mismatch")
+func NNSeed(inputSize int, hidden []int, outputSize int) int {
+        seed := inputSize
+        for _, h := range(hidden) {
+                seed = seed + h
         }
+        return seed + outputSize
+}
 
+func (nn *NeuralNetwork) FeedForward(input []float32) {
         for i := 0; i < len(nn.layers); i++ {
                 if i == 0 {
                         for _, neuron := range nn.layers[i].neurons {
@@ -104,24 +120,43 @@ func (nn *NeuralNetwork) FeedForward(input []float32) []float32 {
                         }
                 }
         }
+}
 
+func (nn *NeuralNetwork) CalculateProps(target *mat.Dense) *mat.Dense {
         outputLayer := nn.layers[len(nn.layers) - 1].neurons
         output := make([]float32, len(outputLayer))
         for i, neuron := range outputLayer {
                 output[i] = neuron.output
         }
         softmax := Softmax(output)
-        for i, neuron := range outputLayer {
-                neuron.output = softmax[i]
+        softmaxFloat64 := make([]float64, len(softmax))
+        for i, v := range softmax {
+                softmaxFloat64[i] = float64(v)
         }
-        return Softmax(output)
+        return mat.NewDense(len(outputLayer), 1, softmaxFloat64)
+}
+
+func (nn *NeuralNetwork) CalculateLoss(target *mat.Dense) float64 {
+        props := nn.CalculateProps(target)
+        outputNeurons := nn.layers[len(nn.layers) - 1].neurons
+        for i := 0; i < len(outputNeurons); i++ {
+                if (target.At(0, i) == 1.0) {
+                        return -math.Log(props.At(0, i))
+                }
+        }
+        panic("ops")
 }
 
 func (nn *NeuralNetwork) Backpropagate(target *mat.Dense) {
         outputLayer := nn.layers[len(nn.layers)-1]
         outputLayer.deltas = make([]float32, len(outputLayer.neurons))
-        for i, neuron := range outputLayer.neurons {
-                outputLayer.deltas[i] = float32(target.At(0, i)) - neuron.output
+        props := nn.CalculateProps(target)
+        // Softmax or 1 - p
+        for i, _ := range outputLayer.neurons {
+                if (target.At(0, i) == 1.0) {
+                        outputLayer.deltas[i] = float32(props.At(0, i))
+                }
+                outputLayer.deltas[i] = 1 - float32(target.At(0, i))
         }
 
         for i := len(nn.layers) - 2; i >= 0; i-- {
@@ -160,9 +195,9 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.Dense) {
                                 Concurrent: true,
                         })
 
-                // [M * N] x [N * 1] => [M * 1]
                 rows, cols := jac.T().Dims()
-                deltas := mat.NewDense(rows, cols, nil)  // Ensure correct dimensions
+                deltas := mat.NewDense(rows, cols, nil)
+                // [M * N] x [N * 1] => [M * 1]
                 deltas.Mul(jac.T(), ConvertDeltasToDense(previousLayer))
 
                 deltas.Apply(func(i, j int, v float64) float64 {
@@ -173,6 +208,24 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.Dense) {
                 for i, _ := range layer.deltas {
                         layer.deltas[i] = float32(deltas.At(i, 0))
                 }
+        }
+}
+
+func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
+        for i := 1; i < len(nn.layers); i++ {
+            currentLayer := nn.layers[i]
+            previousLayer := nn.layers[i-1]
+    
+            // Loop through each neuron in the current layer
+            for j, neuron := range currentLayer.neurons {
+                for k := range neuron.weights {
+                    // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
+                    neuron.weights[k] += learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
+                }
+    
+                // Update bias: bias_new = bias_old + learningRate * delta
+                neuron.bias += learningRate * currentLayer.deltas[j]
+            }
         }
 }
 
