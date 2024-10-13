@@ -142,9 +142,11 @@ func load() {
 
 func main() {
 	// input layer + 1 hidden layer + output layer
-	nn := neuralnet.NewNeuralNetwork(1, []int{1}, 1)
-	nn.FeedForward([]float32{1.0})
-	target := mat.NewVecDense(1, []float64{1.0})
+	nn := neuralnet.NewNeuralNetwork(2, []int{2}, 2)
+	nn.FeedForward([]float32{1.0, 0})
+	target := mat.NewVecDense(2, []float64{1.0, 0})
 	fmt.Println("Output:", nn.CalculateLoss(target))
+	fmt.Println("Before BP:", nn)
 	nn.Backpropagate(target)
+	fmt.Println("After BP:", nn)
 }

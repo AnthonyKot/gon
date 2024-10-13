@@ -1,6 +1,8 @@
 package neuralnet
 
 import (
+        "fmt"
+	"strings"
         "math"
         "math/rand"
         "gonum.org/v1/gonum/diff/fd"
@@ -143,7 +145,7 @@ func (nn *NeuralNetwork) CalculateLoss(target *mat.VecDense) float64 {
                         return -math.Log(props.AtVec(i))
                 }
         }
-        panic("ops")
+        panic("Correct label is not defined")
 }
 
 func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
@@ -176,6 +178,7 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
                         input[i] = float64(neuron.output)
                 }
 
+                // TODO: not sure it's even needed if we store activation
                 // jac is delta(ActicatonN)/delta(OutputM)
                 jac := mat.NewDense(n, m, nil)
                 fd.Jacobian(jac,
@@ -205,7 +208,7 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
 
                 layer.deltas = make([]float32, m)
                 for i, _ := range layer.deltas {
-                        layer.deltas[i] = float32(deltas.At(i, 0))
+                        layer.deltas[i] = float32(deltas.AtVec(i))
                 }
         }
 }
@@ -294,3 +297,30 @@ func Softmax(output []float32) []float32 {
     
         return expValues
  }
+
+ // Debug
+ func (l *Layer) String() string {
+	var sb strings.Builder
+
+	// Print each neuron
+	for i, neuron := range l.neurons {
+		sb.WriteString(fmt.Sprintf("Neuron %d: weights=%v, bias=%.2f, output=%.2f\n", i, neuron.weights, neuron.bias, neuron.output))
+	}
+
+	// Print deltas
+	sb.WriteString(fmt.Sprintf("Deltas: %v\n", l.deltas))
+
+	return sb.String()
+}
+
+// Define the String() method for the NeuralNetwork type
+func (nn *NeuralNetwork) String() string {
+	var sb strings.Builder
+
+	// Iterate through the layers and print them
+	for i, layer := range nn.layers {
+		sb.WriteString(fmt.Sprintf("Layer %d:\n%s\n", i, layer.String()))
+	}
+
+	return sb.String()
+}
