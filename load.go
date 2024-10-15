@@ -142,11 +142,16 @@ func load() {
 
 func main() {
 	// input layer + 1 hidden layer + output layer
-	nn := neuralnet.NewNeuralNetwork(2, []int{2}, 2)
-	nn.FeedForward([]float32{1.0, 0})
+	nn := neuralnet.NewNeuralNetwork(2, []int{5}, 2)
+	input := mat.NewVecDense(2, []float64{1.0, 0})
 	target := mat.NewVecDense(2, []float64{1.0, 0})
-	fmt.Println("Output:", nn.CalculateLoss(target))
-	fmt.Println("Before BP:", nn)
-	nn.Backpropagate(target)
-	fmt.Println("After BP:", nn)
+	var learningRate float32 = 0.01
+	for i := 0; i < 1000; i++ {
+		nn.FeedForward(input)
+		nn.Backpropagate(target)
+		nn.UpdateWeights(learningRate)
+		fmt.Println(nn.CalculateLoss(target))
+	}
+	// loss is 0.6931471805599453. we need regulisation
+	fmt.Println(nn)
 }

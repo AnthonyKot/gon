@@ -74,7 +74,7 @@ func NewNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwor
         }
         for l := 0; l < outputSize; l++ {
                 output.neurons[l] = &Neuron{
-                        weights: make([]float32, outputSize),
+                        weights: make([]float32, len(nn.layers[len(nn.layers) - 2].neurons)),
                         bias:    rand.Float32(),
                         activation: ReLU,
                 }
@@ -101,24 +101,22 @@ func NNSeed(inputSize int, hidden []int, outputSize int) int {
         return seed + outputSize
 }
 
-func (nn *NeuralNetwork) FeedForward(input []float32) {
-        for i := 0; i < len(nn.layers); i++ {
-                if i == 0 {
-                        for _, neuron := range nn.layers[i].neurons {
-                                neuron.output = neuron.bias
-                                for j := 0; j < len(input); j++ {
-                                        neuron.output += input[j] * neuron.weights[j]
-                                }
-                                neuron.output = neuron.activation(neuron.output)
+func (nn *NeuralNetwork) FeedForward(target *mat.VecDense) {
+        // the first layer takes inputs as X
+        for _, neuron := range nn.layers[0].neurons {
+                neuron.output = neuron.bias
+                for j := 0; j < target.Len(); j++ {
+                        neuron.output += float32(target.AtVec(j)) * neuron.weights[j]
+                }
+                neuron.output = neuron.activation(neuron.output)
+        }
+        for i := 1; i < len(nn.layers); i++ {
+                for _, neuron := range nn.layers[i].neurons {
+                        neuron.output = neuron.bias
+                        for j := 0; j < len(nn.layers[i - 1].neurons); j++ {
+                                neuron.output += nn.layers[i - 1].neurons[j].output * neuron.weights[j]
                         }
-                } else {
-                        for _, neuron := range nn.layers[i].neurons {
-                                neuron.output = neuron.bias
-                                for j := 0; j < len(nn.layers[i - 1].neurons); j++ {
-                                        neuron.output += nn.layers[i - 1].neurons[j].output * neuron.weights[j]
-                                }
-                                neuron.output = neuron.activation(neuron.output)
-                        }
+                        neuron.output = neuron.activation(neuron.output)
                 }
         }
 }
@@ -157,7 +155,7 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
                 if (target.AtVec(i) == 1.0) {
                         outputLayer.deltas[i] = float32(props.At(i, 0))
                 }
-                outputLayer.deltas[i] = 1 - float32(target.At(i, 0))
+                outputLayer.deltas[i] = 1 - float32(props.At(i, 0))
         }
 
         for i := len(nn.layers) - 2; i >= 0; i-- {
@@ -217,28 +215,27 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
         for i := 1; i < len(nn.layers); i++ {
             currentLayer := nn.layers[i]
             previousLayer := nn.layers[i-1]
-    
-            // Loop through each neuron in the current layer
+
             for j, neuron := range currentLayer.neurons {
                 for k := range neuron.weights {
                     // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
-                    neuron.weights[k] += learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
+                    neuron.weights[k] -= learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
                 }
     
                 // Update bias: bias_new = bias_old + learningRate * delta
-                neuron.bias += learningRate * currentLayer.deltas[j]
+                neuron.bias -= learningRate * currentLayer.deltas[j]
             }
         }
 }
 
-func (nn *NeuralNetwork) Train(trainingData [][]float32, expectedOutputs [][]float32, learningRate float32, epochs int) {
-        for epoch := 0; epoch < epochs; epoch++ {
-                for i := 0; i < len(trainingData); i++ {
-                        nn.FeedForward(trainingData[i])
-                        // TODO: Backpropagation
-                }
-        }
-}
+// func (nn *NeuralNetwork) Train(trainingData [][]float32, expectedOutputs [][]float32, learningRate float32, epochs int) {
+//         for epoch := 0; epoch < epochs; epoch++ {
+//                 for i := 0; i < len(trainingData); i++ {
+//                         nn.FeedForward(trainingData[i])
+//                         // TODO: Backpropagation
+//                 }
+//         }
+// }
 
 // N number of 2nd layer neurons on M number of prev layer so N * M
 func ConvertWeightsDense(neurons []*Neuron) *mat.Dense {
@@ -246,9 +243,9 @@ func ConvertWeightsDense(neurons []*Neuron) *mat.Dense {
         m := len(neurons[0].weights)
 	weights := make([]float64, n * m)
 
-        for i, neuron := range neurons {
-                for j, w := range neuron.weights {
-                        weights[i * n + j] = float64(w)
+        for j, _ := range neurons[0].weights {
+                for i, neuron := range neurons {
+                        weights[i * m + j] = float64(neuron.weights[j])
                 }
         }
 
