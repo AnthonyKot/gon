@@ -1,8 +1,7 @@
 package main
 
-import "gon/neuralnet"
-
 import (
+	"gon/neuralnet"
 	"bufio"
 	"fmt"
 	"image"
@@ -142,16 +141,22 @@ func load() {
 
 func main() {
 	// input layer + 1 hidden layer + output layer
-	nn := neuralnet.NewNeuralNetwork(2, []int{5}, 2)
-	input := mat.NewVecDense(2, []float64{1.0, 0})
-	target := mat.NewVecDense(2, []float64{1.0, 0})
-	var learningRate float32 = 0.01
+	nn := neuralnet.NewNeuralNetwork(4, []int{10}, 3, 0.01, 0.001)
+	input := mat.NewVecDense(4, []float64{1.0, 1.0, 0.0, 0.0})
+	target := mat.NewVecDense(3, []float64{1.0, 0, 0})
 	for i := 0; i < 1000; i++ {
 		nn.FeedForward(input)
 		nn.Backpropagate(target)
-		nn.UpdateWeights(learningRate)
 		fmt.Println(nn.CalculateLoss(target))
 	}
-	// loss is 0.6931471805599453. we need regulisation
-	fmt.Println(nn)
+	for i := 0; i < 3; i++ {
+		nn.FeedForward(input)
+		nn.Backpropagate(target)
+		fmt.Println(nn)
+	}
+	// it works but we have vanishing gradient problem on the pre last layer
+	// TODO:
+	// Batch Normalization
+	// Use Better Weight Initialization (Glorot)
+	// Use Leaky ReLU on the last (pre last) layer
 }

@@ -9,45 +9,48 @@ import (
         "gonum.org/v1/gonum/mat"
 )
 
-type ActivationFunction func(float32) float32
-
 type Neuron struct {
         weights []float32
         bias    float32
         output  float32
-        activation ActivationFunction
 }
 
 type Layer struct {
         neurons []*Neuron
         deltas  []float32
+        activation ActivationFunction
 }
 
 // Represents of the simlest NN.
 type NeuralNetwork struct {
         layers []*Layer
+        input []float32
+        lr float32
+        L2 float32
 }
 
-func NewNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
+func NewNeuralNetwork(inputSize int, hidden []int, outputSize int, learningRate float32, regularization float32) *NeuralNetwork {
         rand.Seed(int64(NNSeed(inputSize, hidden, outputSize)))
 
         nn := &NeuralNetwork{
                 // input + hidden + output
                 layers: make([]*Layer, len(hidden) + 2),
+                lr: learningRate,
+                L2: regularization,
         }
 
         first := &Layer{
                 neurons: make([]*Neuron, inputSize),
+                activation: ReLU{},
         }
         for j := 0; j < inputSize; j++ {
                 first.neurons[j] = &Neuron{
                         weights: make([]float32, inputSize),
-                        bias:    rand.Float32(),
-                        activation: ReLU,
+                        bias:    xavierInit(inputSize),
                 }
                 // TODO: use gauss to init weights
                 for k := range first.neurons[j].weights {
-                        first.neurons[j].weights[k] = rand.Float32()
+                        first.neurons[j].weights[k] = xavierInit(inputSize)
                 }
         }
         nn.layers[0] = first
@@ -55,32 +58,32 @@ func NewNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwor
         for i, size := range hidden {
                 layer := &Layer{
                         neurons: make([]*Neuron, size),
+                        activation: ReLU{},
                 }
                 for j := range layer.neurons {
                         layer.neurons[j] = &Neuron{
                                 weights: make([]float32, len(nn.layers[i].neurons)),
-                                bias:    rand.Float32(),
-                                activation: ReLU,
+                                bias:    xavierInit(size),
                         }
                         // TODO: use gauss to init weights
                         for k := range layer.neurons[j].weights {
-                                layer.neurons[j].weights[k] = rand.Float32()
+                                layer.neurons[j].weights[k] = xavierInit(size)
                         }
                 }
                 nn.layers[i + 1] = layer
         }
         output := &Layer{
                 neurons: make([]*Neuron, outputSize),
+                activation: ReLU{},
         }
         for l := 0; l < outputSize; l++ {
                 output.neurons[l] = &Neuron{
                         weights: make([]float32, len(nn.layers[len(nn.layers) - 2].neurons)),
-                        bias:    rand.Float32(),
-                        activation: ReLU,
+                        bias:    xavierInit(outputSize),
                 }
                 // TODO: use gauss to init weights
                 for k := range output.neurons[l].weights {
-                        output.neurons[l].weights[k] = rand.Float32()
+                        output.neurons[l].weights[k] = xavierInit(outputSize)
                 }
         }
         nn.layers[len(hidden) + 1] = output
@@ -88,9 +91,7 @@ func NewNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwor
 }
 
 func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunction) {
-        for _, neuron := range nn.layers[layerIndex].neurons {
-                neuron.activation = activation
-        }
+        nn.layers[layerIndex].activation = activation
 }
 
 func NNSeed(inputSize int, hidden []int, outputSize int) int {
@@ -101,24 +102,37 @@ func NNSeed(inputSize int, hidden []int, outputSize int) int {
         return seed + outputSize
 }
 
-func (nn *NeuralNetwork) FeedForward(target *mat.VecDense) {
+func (nn *NeuralNetwork) FeedForward(input *mat.VecDense) {
+        saveInput := make([]float32, input.Len())
         // the first layer takes inputs as X
         for _, neuron := range nn.layers[0].neurons {
                 neuron.output = neuron.bias
-                for j := 0; j < target.Len(); j++ {
-                        neuron.output += float32(target.AtVec(j)) * neuron.weights[j]
+                for j := 0; j < input.Len(); j++ {
+                        currentInput := float32(input.AtVec(j))
+                        saveInput[j] = currentInput
+                        neuron.output += currentInput * neuron.weights[j]
                 }
-                neuron.output = neuron.activation(neuron.output)
+                neuron.output = nn.layers[0].activation.Activate(neuron.output)
         }
+        nn.input = saveInput
         for i := 1; i < len(nn.layers); i++ {
                 for _, neuron := range nn.layers[i].neurons {
                         neuron.output = neuron.bias
                         for j := 0; j < len(nn.layers[i - 1].neurons); j++ {
                                 neuron.output += nn.layers[i - 1].neurons[j].output * neuron.weights[j]
                         }
-                        neuron.output = neuron.activation(neuron.output)
+                        neuron.output = nn.layers[i].activation.Activate(neuron.output)
                 }
         }
+}
+
+func (nn *NeuralNetwork) Output() []float32 {
+        outputLayer := nn.layers[len(nn.layers) - 1].neurons
+        output := make([]float32, len(outputLayer))
+        for i, neuron := range outputLayer {
+                output[i] = neuron.output
+        }
+        return output
 }
 
 func (nn *NeuralNetwork) CalculateProps() *mat.VecDense {
@@ -135,27 +149,37 @@ func (nn *NeuralNetwork) CalculateProps() *mat.VecDense {
         return mat.NewVecDense(len(outputLayer), softmaxFloat64)
 }
 
-func (nn *NeuralNetwork) CalculateLoss(target *mat.VecDense) float64 {
+func (nn *NeuralNetwork) CalculateLoss(target *mat.VecDense) float32 {
         props := nn.CalculateProps()
         outputNeurons := nn.layers[len(nn.layers) - 1].neurons
+        var loss float32 = 0.0
         for i := 0; i < len(outputNeurons); i++ {
                 if (target.AtVec(i) == 1.0) {
-                        return -math.Log(props.AtVec(i))
+                        loss -= float32(math.Log(props.AtVec(i)))
                 }
         }
-        panic("Correct label is not defined")
+        // Add L2 regularization term
+        for _, layer := range nn.layers {
+                for _, neuron := range layer.neurons {
+                        for _, weight := range neuron.weights {
+                                loss += nn.L2 * weight * weight
+                        }
+                }
+        }
+        return loss
 }
 
 func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
-        outputLayer := nn.layers[len(nn.layers)-1]
+        outputLayer := nn.layers[len(nn.layers) - 1]
         outputLayer.deltas = make([]float32, len(outputLayer.neurons))
         props := nn.CalculateProps()
-        // Softmax or 1 - Softmax
+        // Softmax - 1 or Softmax
         for i := 0; i < len(outputLayer.neurons); i++ {
                 if (target.AtVec(i) == 1.0) {
+                        outputLayer.deltas[i] = float32(props.At(i, 0)) - 1
+                } else {
                         outputLayer.deltas[i] = float32(props.At(i, 0))
                 }
-                outputLayer.deltas[i] = 1 - float32(props.At(i, 0))
         }
 
         for i := len(nn.layers) - 2; i >= 0; i-- {
@@ -201,7 +225,7 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
 
                 deltas := mat.NewVecDense(activationDelta.Len(), nil)
                 for i := 0; i < activationDelta.Len(); i++ {
-                        deltas.SetVec(i, activationDelta.AtVec(i) * ReLUPrime(input[i]))
+                        deltas.SetVec(i, activationDelta.AtVec(i) * float64(layer.activation.Derivative(float32(input[i]))))
                 }
 
                 layer.deltas = make([]float32, m)
@@ -209,9 +233,24 @@ func (nn *NeuralNetwork) Backpropagate(target *mat.VecDense) {
                         layer.deltas[i] = float32(deltas.AtVec(i))
                 }
         }
+        // TODO can be changed in real time based on schedule
+        nn.UpdateWeights(nn.lr)
 }
 
 func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
+        // 1st layer update
+        for j, neuron := range nn.layers[0].neurons {
+                for k := range neuron.weights {
+                        // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
+                        neuron.weights[k] -= learningRate * nn.layers[0].deltas[j] * nn.input[k]
+                        // regulisation term
+                        neuron.weights[k] -= nn.L2 * neuron.weights[k]
+                    }
+        
+                    // Update bias: bias_new = bias_old + learningRate * delta
+                    neuron.bias -= learningRate * nn.layers[0].deltas[j]
+        }
+        
         for i := 1; i < len(nn.layers); i++ {
             currentLayer := nn.layers[i]
             previousLayer := nn.layers[i-1]
@@ -220,6 +259,8 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
                 for k := range neuron.weights {
                     // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
                     neuron.weights[k] -= learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
+                    // regulisation term
+                    neuron.weights[k] -= nn.L2 * neuron.weights[i]
                 }
     
                 // Update bias: bias_new = bias_old + learningRate * delta
@@ -268,17 +309,6 @@ func ConvertDeltasToDense(layer *Layer) *mat.VecDense {
         return dense
 }
 
-func ReLU(x float32) float32 {
-        return float32(math.Max(float64(x), 0))
-}
-
-func ReLUPrime(x float64) float64 {
-        if x > 0 {
-                return 1
-        }
-        return 0
-}
-
 func Softmax(output []float32) []float32 {
         expValues := make([]float32, len(output))
         var sum float32 = 0.0
@@ -294,6 +324,10 @@ func Softmax(output []float32) []float32 {
     
         return expValues
  }
+
+ func xavierInit(inputs int) float32 {
+        return rand.Float32() * float32(math.Sqrt(1.0/float64(inputs)))
+}
 
  // Debug
  func (l *Layer) String() string {
