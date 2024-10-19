@@ -10,6 +10,9 @@ import (
 	"io"
 	"os"
 
+	"flag"
+    "runtime/pprof"
+
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -62,11 +65,11 @@ func loadCIFAR10(filePath string) ([][]mat.Dense, []int, error) {
 	return images, labels, nil
 }
 
-func readLabels() ([]string, error) {
+func readLabels() []string {
 	file, err := os.Open("data/batches.meta.txt")
 	if err != nil {
 		fmt.Println("Error opening file:", err)
-		return nil, err
+		panic("Error opening file")
 	}
 	defer file.Close()
 
@@ -78,11 +81,12 @@ func readLabels() ([]string, error) {
 
 	if err := scanner.Err(); err != nil {
 		fmt.Println("Error reading file:", err)
+		panic("Error reading file")
 	}
-	return words, nil
+	return words
 }
 
-func saveImg(ts [][]mat.Dense, ws []string, ls []int, i int) {
+func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int) {
 	t := ts[i]
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
@@ -97,12 +101,18 @@ func saveImg(ts [][]mat.Dense, ws []string, ls []int, i int) {
 		}
 	}
 	// Save the image to a PNG file
-	label := fmt.Sprintf("file_%s_%d.png", ws[ls[i]], i)
+	ws_idx := 0
+	for j:= 0; j < ls[i].Len(); j++ {
+		if ls[i].AtVec(j) == 1.0 {
+			ws_idx = j
+		}
+	}
+	label := fmt.Sprintf("file_%s_%d.png", ws[ws_idx], i)
 	file, err := os.Create(label)
+	defer file.Close()
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
 
 	err = png.Encode(file, img)
 	if err != nil {
@@ -112,51 +122,105 @@ func saveImg(ts [][]mat.Dense, ws []string, ls []int, i int) {
 	println(fmt.Sprintf("Image saved as %s", label))
 }
 
-func oneHotEncode(labels []int, numClasses int) *mat.Dense {
-	numLabels := len(labels)
-	norm := make([]float64, numLabels*numClasses)
-
+func oneHotEncode(labels []int, numClasses int) []mat.VecDense {
+	encoded := make([]mat.VecDense, len(labels))
 	for i, label := range labels {
-		norm[i * numClasses + label] = 1.0
+		vec := mat.NewVecDense(numClasses, nil)
+		for j := 0; j < vec.Len(); j++ {
+			if label == j {
+				vec.SetVec(j, 1.0)
+			} else {
+				vec.SetVec(j, 0)
+			}
+		}
+		encoded[i] = *vec
 	}
-
-	return mat.NewDense(numLabels, numClasses, norm)
+	return encoded
 }
 
-func load() {
+func description(encoded mat.VecDense, desc []string) string {
+	for i := 0; i < encoded.Len(); i++ {
+		if encoded.AtVec(i) == 1.0 {
+			return desc[i]
+		}
+	}
+	panic("No suitable description")
+}
+
+func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
+    // Create a new matrix to store the grayscale image
+	rows, cols := rgbImage[0].Dims()
+    grayImage := mat.NewDense(rows, cols, nil)
+
+    // Iterate over each pixel in the RGB image
+    for i := 0; i < rows; i++ {
+        for j := 0; j < cols; j++ {
+            // Calculate the grayscale value using the weighted average of RGB components
+            r, g, b := rgbImage[0].At(i, j), rgbImage[1].At(i, j), rgbImage[2].At(i, j)
+            gray := 0.299*r + 0.587*g + 0.114*b
+            grayImage.Set(i, j, gray)
+        }
+    }
+
+    return *grayImage
+}
+
+func flaten(image mat.Dense) mat.VecDense {
+	rows, cols := image.Dims()
+	vec := mat.NewVecDense(rows * cols, nil)
+	for i:= 0; i < rows; i++ {
+		for j:= 0; j < cols; j++ {
+			vec.SetVec(i * cols + j, image.At(i, j))
+		}
+	}
+	return *vec
+}
+
+func load() ([][]mat.Dense, []mat.VecDense) {
 	images, labels, err := loadCIFAR10("data/data_batch_1.bin")
 	if err != nil {
 		fmt.Println("Error loading CIFAR-10:", err)
-		return
+		panic("Error loading CIFAR-10")
 	}
-	words, err := readLabels()
-	if err != nil {
-		fmt.Println("Error loading labels:", err)
-		return
-	}
-	saveImg(images, words, labels, 3)
 	out := oneHotEncode(labels, 10)
-	fmt.Println(out)
+	return images, out
 }
 
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+
 func main() {
+    flag.Parse()
+    if *cpuprofile != "" {
+        f, _ := os.Create(*cpuprofile)
+        pprof.StartCPUProfile(f)
+        defer pprof.StopCPUProfile()
+    }
+	imgs, labels := load()
+	descr := readLabels()
+	saveImg(imgs, labels, descr, 3)
 	// input layer + 1 hidden layer + output layer
-	nn := neuralnet.NewNeuralNetwork(4, []int{10}, 3, 0.01, 0.001)
-	input := mat.NewVecDense(4, []float64{1.0, 1.0, 0.0, 0.0})
-	target := mat.NewVecDense(3, []float64{1.0, 0, 0})
-	for i := 0; i < 1000; i++ {
+	nn := neuralnet.NewNeuralNetwork(1024, []int{256, 128}, 10, 0.01, 0.001)
+	// around 250k params ~ 1000*250
+	nn.SetActivation(2, neuralnet.Tanh {})
+	input := flaten(RGBToBlackWhite(imgs[0]))
+	target := labels[0]
+	fmt.Println(target)
+	for i := 0; i < 2; i++ {
 		nn.FeedForward(input)
-		nn.Backpropagate(target)
-		fmt.Println(nn.CalculateLoss(target))
+		nn.Backpropagate(target, false)
 	}
-	for i := 0; i < 3; i++ {
-		nn.FeedForward(input)
-		nn.Backpropagate(target)
-		fmt.Println(nn)
-	}
-	// it works but we have vanishing gradient problem on the pre last layer
-	// TODO:
-	// Batch Normalization
-	// Use Better Weight Initialization (Glorot)
-	// Use Leaky ReLU on the last (pre last) layer
+	fmt.Println(nn)
+
+	// profiling top 10
+	// 	  flat  flat%   sum%        cum   cum%
+	//    620ms 23.57% 23.57%      630ms 23.95%  gon/neuralnet.(*NeuralNetwork).UpdateWeights
+	//    570ms 21.67% 45.25%      580ms 22.05%  gon/neuralnet.(*NeuralNetwork).FeedForward
+	//    490ms 18.63% 63.88%      550ms 20.91%  gon/neuralnet.ConvertWeightsDense
+	//    260ms  9.89% 73.76%      260ms  9.89%  runtime.kevent
+	//    220ms  8.37% 82.13%      220ms  8.37%  syscall.syscall
+	//    140ms  5.32% 87.45%      140ms  5.32%  runtime.asyncPreempt
+	// 	  60ms  2.28% 89.73%       60ms  2.28%  runtime.madvise
+	// 	  50ms  1.90% 91.63%       50ms  1.90%  runtime.memclrNoHeapPointers
+	// 	  30ms  1.14% 92.78%      130ms  4.94%  gon/neuralnet.(*NeuralNetwork).CalculateLoss
+	// 	  30ms  1.14% 93.92%       30ms  1.14%  internal/runtime/atomic.(*UnsafePointer).Load (inline)
 }

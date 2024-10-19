@@ -13,7 +13,6 @@ func (r ReLU) Activate(x float32) float32 {
 	return float32(math.Max(float64(x), 0))
 }
 
-
 func (r ReLU) Derivative(x float32) float32 {
 	if x > 0 {
 		return 1
@@ -41,5 +40,5 @@ func (t Tanh) Activate(x float32) float32 {
 
 func (t Tanh) Derivative(x float32) float32 {
 	tanh := t.Activate(x)
-	return 1 - tanh*tanh
+	return 1 - tanh * tanh
 }
