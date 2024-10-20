@@ -147,6 +147,15 @@ func description(encoded mat.VecDense, desc []string) string {
 	panic("No suitable description")
 }
 
+func label(encoded mat.VecDense) int {
+	for i := 0; i < encoded.Len(); i++ {
+		if encoded.AtVec(i) == 1.0 {
+			return i
+		}
+	}
+	panic("No suitable idx")
+}
+
 func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
     // Create a new matrix to store the grayscale image
 	rows, cols := rgbImage[0].Dims()
@@ -176,6 +185,26 @@ func flaten(image mat.Dense) mat.VecDense {
 	return *vec
 }
 
+func converImagesToInputs(images [][]mat.Dense) []mat.VecDense {
+	inputs := make([]mat.VecDense, len(images))
+	for i := 0; i < len(inputs); i++ {
+		inputs[i] = flaten(RGBToBlackWhite(images[i]))
+	}
+	return inputs
+}
+
+func finMaxIdx(output []float32) int {
+	index := 0
+	max := output[0]
+	for i := 0; i < len(output); i++ {
+		if max < output[i] {
+			max = output[i];
+			index = i;
+		}
+	}
+	return index
+}
+
 func load() ([][]mat.Dense, []mat.VecDense) {
 	images, labels, err := loadCIFAR10("data/data_batch_1.bin")
 	if err != nil {
@@ -184,6 +213,17 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 	}
 	out := oneHotEncode(labels, 10)
 	return images, out
+}
+
+func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int) float32 {
+	accuracy := 0
+	for i := from; i < to; i ++ {
+		nn.FeedForward(trainingData[i])
+		if label(expectedOutputs[i]) == finMaxIdx(nn.Output()) {
+			accuracy++
+		}
+	}
+	return float32(accuracy) / float32(to - from)
 }
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
@@ -199,28 +239,24 @@ func main() {
 	descr := readLabels()
 	saveImg(imgs, labels, descr, 3)
 	// input layer + 1 hidden layer + output layer
-	nn := neuralnet.NewNeuralNetwork(1024, []int{256, 128}, 10, 0.01, 0.001)
 	// around 250k params ~ 1000*250
-	nn.SetActivation(2, neuralnet.Tanh {})
-	input := flaten(RGBToBlackWhite(imgs[0]))
-	target := labels[0]
-	fmt.Println(target)
-	for i := 0; i < 2; i++ {
-		nn.FeedForward(input)
-		nn.Backpropagate(target, false)
+	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, 0.001, 0.0001)
+	// Tanh works the best without Jacobian calculation
+	inputs := converImagesToInputs(imgs)
+	// 1 * 10 epochs
+	from := 10
+	to := from + 100
+	epochs := 5
+	for i := 0; i < epochs; i ++ {
+		nn.Train(inputs[from:to], labels[from:to], 10)
+		fmt.Println("train", accuracy(nn, inputs, labels, from, to))
+		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + to - from))
 	}
-	fmt.Println(nn)
-
-	// profiling top 10
-	// 	  flat  flat%   sum%        cum   cum%
-	//    620ms 23.57% 23.57%      630ms 23.95%  gon/neuralnet.(*NeuralNetwork).UpdateWeights
-	//    570ms 21.67% 45.25%      580ms 22.05%  gon/neuralnet.(*NeuralNetwork).FeedForward
-	//    490ms 18.63% 63.88%      550ms 20.91%  gon/neuralnet.ConvertWeightsDense
-	//    260ms  9.89% 73.76%      260ms  9.89%  runtime.kevent
-	//    220ms  8.37% 82.13%      220ms  8.37%  syscall.syscall
-	//    140ms  5.32% 87.45%      140ms  5.32%  runtime.asyncPreempt
-	// 	  60ms  2.28% 89.73%       60ms  2.28%  runtime.madvise
-	// 	  50ms  1.90% 91.63%       50ms  1.90%  runtime.memclrNoHeapPointers
-	// 	  30ms  1.14% 92.78%      130ms  4.94%  gon/neuralnet.(*NeuralNetwork).CalculateLoss
-	// 	  30ms  1.14% 93.92%       30ms  1.14%  internal/runtime/atomic.(*UnsafePointer).Load (inline)
+	// profiling top 5
+	// flat  flat%   sum%        cum   cum%
+    // 21.03s 24.42% 24.42%     21.98s 25.52%  gon/neuralnet.(*NeuralNetwork).UpdateWeights
+    // 17.23s 20.00% 44.42%     18.41s 21.37%  gon/neuralnet.ConvertWeightsDense
+    // 14.96s 17.37% 61.79%     15.27s 17.73%  gon/neuralnet.(*NeuralNetwork).CalculateLoss
+    // 10.21s 11.85% 73.64%     10.22s 11.87%  gonum.org/v1/gonum/mat.(*VecDense).at (inline)
+    //  9.91s 11.51% 85.15%     22.71s 26.37%  gon/neuralnet.(*NeuralNetwork).FeedForward
 }

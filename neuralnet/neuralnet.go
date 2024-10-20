@@ -132,48 +132,6 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
         }
 }
 
-func (nn *NeuralNetwork) Output() []float32 {
-        outputLayer := nn.layers[len(nn.layers) - 1].neurons
-        output := make([]float32, len(outputLayer))
-        for i, neuron := range outputLayer {
-                output[i] = neuron.output
-        }
-        return output
-}
-
-func (nn *NeuralNetwork) CalculateProps() *mat.VecDense {
-        outputLayer := nn.layers[len(nn.layers) - 1].neurons
-        output := make([]float32, len(outputLayer))
-        for i, neuron := range outputLayer {
-                output[i] = neuron.output
-        }
-        softmax := Softmax(output)
-        softmaxFloat64 := make([]float64, len(softmax))
-        for i, v := range softmax {
-                softmaxFloat64[i] = float64(v)
-        }
-        return mat.NewVecDense(len(outputLayer), softmaxFloat64)
-}
-
-func (nn *NeuralNetwork) CalculateLoss(target mat.VecDense) float32 {
-        props := nn.CalculateProps()
-        outputNeurons := nn.layers[len(nn.layers) - 1].neurons
-        var loss float32 = 0.0
-        for i := 0; i < len(outputNeurons); i++ {
-                if (target.AtVec(i) == 1.0) {
-                        loss -= float32(math.Log(props.AtVec(i)))
-                }
-        }
-        // Add L2 regularization term
-        for _, layer := range nn.layers {
-                for _, neuron := range layer.neurons {
-                        for _, weight := range neuron.weights {
-                                loss += nn.L2 * weight * weight
-                        }
-                }
-        }
-        return loss
-}
 
 func (nn *NeuralNetwork) Backpropagate(target mat.VecDense, jacobian bool) {
         outputLayer := nn.layers[len(nn.layers) - 1]
@@ -278,14 +236,63 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
         }
 }
 
-// func (nn *NeuralNetwork) Train(trainingData [][]float32, expectedOutputs [][]float32, learningRate float32, epochs int) {
-//         for epoch := 0; epoch < epochs; epoch++ {
-//                 for i := 0; i < len(trainingData); i++ {
-//                         nn.FeedForward(trainingData[i])
-//                         // TODO: Backpropagation
-//                 }
-//         }
-// }
+func (nn *NeuralNetwork) Train(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
+        for epoch := 0; epoch < epochs; epoch++ {
+                // SGD. Train on 10% of data
+                var loss float32= 0.0
+                data, labels := selectSamples(trainingData, expectedOutputs, 0.1)
+                for i := 0; i < len(data); i++ {
+                        nn.FeedForward(data[i])
+                        loss += nn.CalculateLoss(labels[i])
+                        nn.Backpropagate(labels[i], false)
+                }
+                fmt.Println(fmt.Sprintf("Loss = %.2f\n", loss))
+        }
+}
+
+
+func (nn *NeuralNetwork) Output() []float32 {
+        outputLayer := nn.layers[len(nn.layers) - 1].neurons
+        output := make([]float32, len(outputLayer))
+        for i, neuron := range outputLayer {
+                output[i] = neuron.output
+        }
+        return output
+}
+
+func (nn *NeuralNetwork) CalculateProps() *mat.VecDense {
+        outputLayer := nn.layers[len(nn.layers) - 1].neurons
+        output := make([]float32, len(outputLayer))
+        for i, neuron := range outputLayer {
+                output[i] = neuron.output
+        }
+        softmax := Softmax(output)
+        softmaxFloat64 := make([]float64, len(softmax))
+        for i, v := range softmax {
+                softmaxFloat64[i] = float64(v)
+        }
+        return mat.NewVecDense(len(outputLayer), softmaxFloat64)
+}
+
+func (nn *NeuralNetwork) CalculateLoss(target mat.VecDense) float32 {
+        props := nn.CalculateProps()
+        outputNeurons := nn.layers[len(nn.layers) - 1].neurons
+        var loss float32 = 0.0
+        for i := 0; i < len(outputNeurons); i++ {
+                if (target.AtVec(i) == 1.0) {
+                        loss -= float32(math.Log(props.AtVec(i)))
+                }
+        }
+        // Add L2 regularization term
+        for _, layer := range nn.layers {
+                for _, neuron := range layer.neurons {
+                        for _, weight := range neuron.weights {
+                                loss += nn.L2 * weight * weight
+                        }
+                }
+        }
+        return loss
+}
 
 // N number of 2nd layer neurons on M number of prev layer so N * M
 func ConvertWeightsDense(neurons []*Neuron) *mat.Dense {
@@ -334,10 +341,31 @@ func Softmax(output []float32) []float32 {
         return expValues
  }
 
- // TODO : norm(0, 1/num_inputs)
- func xavierInit(numInputs int, numOutputs int) float32 {
+func xavierInit(numInputs int, numOutputs int) float32 {
         limit := math.Sqrt(6.0 / float64(numInputs + numOutputs))
         return float32(2 * rand.Float64() * limit - limit)
+}
+
+func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, samplesRatio float64) ([]mat.VecDense, []mat.VecDense) {
+        selectedIndices := make(map[int]bool)
+        resultSize := int(float64(len(trainingData)) * samplesRatio)
+        // Randomly select 10% of inputs
+        for len(selectedIndices) < resultSize {
+                randomIndex := rand.Intn(len(trainingData))
+                if !selectedIndices[randomIndex] {
+                        selectedIndices[randomIndex] = true
+                }
+        }
+        selectedInputs := make([]mat.VecDense, resultSize)
+        selectedLabels := make([]mat.VecDense, resultSize)
+        // Iterate over selected indices and copy corresponding elements
+        i := 0
+        for index := range selectedIndices {
+                selectedInputs[i] = trainingData[index]
+                selectedLabels[i] = expectedOutputs[index]
+                i++
+        }
+        return selectedInputs, selectedLabels
 }
 
  // Debug
