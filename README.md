@@ -5,6 +5,9 @@ Hidden layer 2: 128 neurons, ReLU activation
 Hidden layer 3: 10 neurons, Leaky ReLU activation
 Output layer: softmax activation
 
+"10 to 50 epochs for medium-sized datasets.
+50 to 200 epochs for very large datasets."
+
 TODO: learn more on Stochastic Gradient Descent (SGD) ?
 
 Profile:

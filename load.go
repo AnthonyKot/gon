@@ -218,7 +218,7 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int) float32 {
 	accuracy := 0
 	for i := from; i < to; i ++ {
-		nn.FeedForward(trainingData[i])
+		nn.FeedForward(trainingData[i], expectedOutputs[i])
 		if label(expectedOutputs[i]) == finMaxIdx(nn.Output()) {
 			accuracy++
 		}
@@ -240,23 +240,43 @@ func main() {
 	saveImg(imgs, labels, descr, 3)
 	// input layer + 1 hidden layer + output layer
 	// around 250k params ~ 1000*250
-	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, 0.001, 0.0001)
+	// 10e-3 looks like reasonable LR
+	// deviding by 10 give 10e-4 for L2 regulisation
+	var lr float32 = 0.0005
+	var L2 float32 = lr / 10
 	// Tanh works the best without Jacobian calculation
 	inputs := converImagesToInputs(imgs)
 	// 1 * 10 epochs
 	from := 10
-	to := from + 100
-	epochs := 5
-	for i := 0; i < epochs; i ++ {
-		nn.Train(inputs[from:to], labels[from:to], 10)
+	to := from + 300
+	epochs := 30
+
+	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr, L2)
+	for i := 0; i < epochs; i++ {
+		nn.TrainSGD(inputs[from:to], labels[from:to], 1)
 		fmt.Println("train", accuracy(nn, inputs, labels, from, to))
-		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + to - from))
+		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/2)))
+		fmt.Println()
 	}
+	// nn = neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr * 10, L2 * 10)
+	// for i := 0; i < epochs; i++ {
+	// 	nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1)
+	// 	fmt.Println("train", accuracy(nn, inputs, labels, from, to))
+	// 	fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/2)))
+	// 	fmt.Println()
+	// }
+	// nn = neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr * 100, L2 * 100)
+	// for i := 0; i < epochs; i++ {
+	// 	nn.TrainBatch(inputs[from:to], labels[from:to], 1)
+	// 	fmt.Println("train", accuracy(nn, inputs, labels, from, to))
+	// 	fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/2)))
+	// 	fmt.Println()
+	// }
 	// profiling top 5
 	// flat  flat%   sum%        cum   cum%
-    // 21.03s 24.42% 24.42%     21.98s 25.52%  gon/neuralnet.(*NeuralNetwork).UpdateWeights
-    // 17.23s 20.00% 44.42%     18.41s 21.37%  gon/neuralnet.ConvertWeightsDense
-    // 14.96s 17.37% 61.79%     15.27s 17.73%  gon/neuralnet.(*NeuralNetwork).CalculateLoss
-    // 10.21s 11.85% 73.64%     10.22s 11.87%  gonum.org/v1/gonum/mat.(*VecDense).at (inline)
-    //  9.91s 11.51% 85.15%     22.71s 26.37%  gon/neuralnet.(*NeuralNetwork).FeedForward
+    // 24.42% (*NeuralNetwork).UpdateWeights
+    // 20.00% gon/neuralnet.ConvertWeightsDense
+    // 17.37% gon/neuralnet.(*NeuralNetwork).CalculateLoss
+    // 11.85% gonum.org/v1/gonum/mat.(*VecDense).at (inline)
+    // 11.51% gon/neuralnet.(*NeuralNetwork).FeedForward
 }
