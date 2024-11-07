@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"math/rand"
 
 	"flag"
     "runtime/pprof"
@@ -86,7 +87,7 @@ func readLabels() []string {
 	return words
 }
 
-func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int) {
+func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int, j int) {
 	t := ts[i]
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
@@ -107,7 +108,7 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int) {
 			ws_idx = j
 		}
 	}
-	label := fmt.Sprintf("file_%s_%d.png", ws[ws_idx], i)
+	label := fmt.Sprintf("file_%s_%d_%s.png", ws[ws_idx], i, ws[j])
 	file, err := os.Create(label)
 	defer file.Close()
 	if err != nil {
@@ -237,25 +238,40 @@ func main() {
     }
 	imgs, labels := load()
 	descr := readLabels()
-	saveImg(imgs, labels, descr, 3)
+	saveImg(imgs, labels, descr, 3, 3)
 	// input layer + 1 hidden layer + output layer
 	// around 250k params ~ 1000*250
-	// 10e-3 looks like reasonable LR
-	// deviding by 10 give 10e-4 for L2 regulisation
-	var lr float32 = 0.0005
-	var L2 float32 = lr / 10
-	// Tanh works the best without Jacobian calculation
 	inputs := converImagesToInputs(imgs)
-	// 1 * 10 epochs
-	from := 10
-	to := from + 300
-	epochs := 30
 
-	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr, L2)
+	// Tanh works the best without Jacobian calculation
+	from := 0
+	to := from + 5000
+	epochs := 10
+
+	// return &Params{
+	// 	lr:      0.01,
+	// 	decay:   0.95,
+	// 	L2:      0.001,
+	// 	lowCap:  1e-8,
+	// 	relu:    0.05,
+	// }
+	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
+	j := 0
 	for i := 0; i < epochs; i++ {
-		nn.TrainSGD(inputs[from:to], labels[from:to], 1)
+		j = to + rand.Intn(to - from / 2)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1, 1)
+		j = to + rand.Intn(to - from / 2)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 10, 1)
+		j = to + rand.Intn(to - from / 2)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
+		j = to + rand.Intn(to - from / 2)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1000, 1)
 		fmt.Println("train", accuracy(nn, inputs, labels, from, to))
-		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/2)))
+		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/5)))
 		fmt.Println()
 	}
 	// nn = neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr * 10, L2 * 10)

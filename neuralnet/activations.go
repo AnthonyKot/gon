@@ -20,6 +20,28 @@ func (r ReLU) Derivative(x float32) float32 {
 	return 0
 }
 
+type LeakyReLU struct {
+	alpha float32
+}
+
+func NewLeakyReLU(alpha float32) LeakyReLU {
+	return LeakyReLU{alpha: alpha}
+}
+
+func (l LeakyReLU) Activate(x float32) float32 {
+	if x > 0 {
+		return x
+	}
+	return l.alpha * x
+}
+
+func (l LeakyReLU) Derivative(x float32) float32 {
+	if x > 0 {
+		return 1
+	}
+	return l.alpha
+}
+
 type Sigmoid struct{}
 
 func (s Sigmoid) Activate(x float32) float32 {
