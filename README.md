@@ -82,9 +82,11 @@ go tool pprof cpu.prof
         return gradients
     } -->
 
+TODO: add multythreading guards since number of workes affects result
+
 TODO: preprocess to [-1, 1] range
-TODO: drop neurons instead of L2
 TODO: better gradient descent (momentum)
+TODO: drop neurons instead of L2
 TODO: use colors of image
 
 TODO: 2nd order gradient descent ?
@@ -94,6 +96,7 @@ TODO: measure perfomance/time
 TODO: compare float32 vs float64 perfomance
 TODO: consider "manual" GC
 TODO: put it into Docker
+TODO: since this images augumentation may help
 
 TODO?:
 func init() {

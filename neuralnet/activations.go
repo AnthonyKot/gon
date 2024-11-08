@@ -64,3 +64,13 @@ func (t Tanh) Derivative(x float32) float32 {
 	tanh := t.Activate(x)
 	return 1 - tanh * tanh
 }
+
+type Linear struct{}
+
+func (t Linear) Activate(x float32) float32 {
+	return x
+}
+
+func (t Linear) Derivative(x float32) float32 {
+	return 1
+}

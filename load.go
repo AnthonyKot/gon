@@ -219,8 +219,7 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int) float32 {
 	accuracy := 0
 	for i := from; i < to; i ++ {
-		nn.FeedForward(trainingData[i], expectedOutputs[i])
-		if label(expectedOutputs[i]) == finMaxIdx(nn.Output()) {
+		if label(expectedOutputs[i]) == nn.Predict(trainingData[i]) {
 			accuracy++
 		}
 	}
@@ -238,42 +237,41 @@ func main() {
     }
 	imgs, labels := load()
 	descr := readLabels()
-	saveImg(imgs, labels, descr, 3, 3)
 	// input layer + 1 hidden layer + output layer
 	// around 250k params ~ 1000*250
 	inputs := converImagesToInputs(imgs)
 
 	// Tanh works the best without Jacobian calculation
 	from := 0
-	to := from + 5000
+	to := from + 8000
 	epochs := 10
+	train_to_validation := 4
 
-	// return &Params{
-	// 	lr:      0.01,
-	// 	decay:   0.95,
-	// 	L2:      0.001,
-	// 	lowCap:  1e-8,
-	// 	relu:    0.05,
-	// }
 	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
 	j := 0
 	for i := 0; i < epochs; i++ {
-		j = to + rand.Intn(to - from / 2)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
-		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1, 1)
-		j = to + rand.Intn(to - from / 2)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
-		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 10, 1)
-		j = to + rand.Intn(to - from / 2)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
 		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
-		j = to + rand.Intn(to - from / 2)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j], labels[j]))
-		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1000, 1)
+		j = to + rand.Intn((to - from) / train_to_validation)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
+		fmt.Println(nn.Output())
+		j = to + rand.Intn((to - from) / train_to_validation)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
+		fmt.Println(nn.Output())
+		j = to + rand.Intn((to - from) / train_to_validation)
+		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
+		fmt.Println(nn.Output())
 		fmt.Println("train", accuracy(nn, inputs, labels, from, to))
-		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/5)))
+		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from) / train_to_validation)))
 		fmt.Println()
 	}
+
+
+	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
+	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
+	// j = to + rand.Intn(to - from / 2)
+	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
+	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1000, 1)
+
 	// nn = neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr * 10, L2 * 10)
 	// for i := 0; i < epochs; i++ {
 	// 	nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1)
