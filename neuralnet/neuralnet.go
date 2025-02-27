@@ -34,11 +34,12 @@ type NeuralNetwork struct {
 }
 
 type Params struct {
-        lr      float32
-        decay   float32
-        L2      float32
-        lowCap  float32
-        relu    float32
+        lr       float32
+        decay    float32
+        L2       float32
+        lowCap   float32
+        relu     float32
+        jacobian bool
 }
 
 type Task struct {
@@ -57,13 +58,14 @@ func NewParams(learningRate float32, decay float32, regularization float32, cap 
         return NewParamsFull(learningRate, decay, regularization, cap, defaultParams().relu)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, jacobian bool) Params {
         return Params{
                 lr:      learningRate,
                 decay:   decay,
                 L2:      regularization,
                 lowCap:  cap,
                 relu:    relu,
+                jacobian:jacobian
             }
 }
 
@@ -145,11 +147,12 @@ func NewNeuralNetwork(inputSize int, hidden []int, outputSize int, params Params
 
 func defaultParams() *Params {
         return &Params{
-            lr:      0.01,
+            lr:      0.001,
             decay:   0.8,
             L2:      0,
             lowCap:  0,
             relu:    0,
+            jacobian:false,
         }
 }
 
@@ -209,7 +212,7 @@ func (nn *NeuralNetwork) AccumulateLoss(target mat.VecDense) {
         }
 }
 
-func (nn *NeuralNetwork) Backpropagate(dataPoints int, jacobian bool) {
+func (nn *NeuralNetwork) Backpropagate(dataPoints int) {
         outputLayer := nn.layers[len(nn.layers) - 1]
         outputLayer.deltas = make([]float32, len(outputLayer.neurons))
 
@@ -239,7 +242,7 @@ func (nn *NeuralNetwork) Backpropagate(dataPoints int, jacobian bool) {
                 }
 
                 jac := mat.NewDense(n, m, nil)
-                if (jacobian) {
+                if (nn.params.jacobian) {
                         // N * 1
                         bias := convertBiasToDense(nextLayer.neurons)
                         // jac is delta(ActicatonN)/delta(OutputM)
@@ -329,7 +332,7 @@ func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs [
                                 nn.FeedForward(data[i])
                                 nn.AccumulateLoss(labels[i])
                                 loss += nn.calculateLoss(labels[i])
-                                nn.Backpropagate(1, false)
+                                nn.Backpropagate(1)
                         }
                 }
                 nn.params.lr = nn.params.lr * 100
@@ -368,7 +371,7 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
                                 }(task)
                         }
                         wg.Wait()
-                        nn.Backpropagate(len(currentData), false)
+                        nn.Backpropagate(len(currentData))
                         nn.params.lr = nn.params.lr * nn.params.decay
                 }
                 fmt.Printf("Time elapsed: %s\n", time.Since(start))
@@ -385,7 +388,7 @@ func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs
                         nn.AccumulateLoss(expectedOutputs[i])
                         loss += nn.calculateLoss(expectedOutputs[i])
                 }
-                nn.Backpropagate(len(trainingData), false)
+                nn.Backpropagate(len(trainingData))
                 fmt.Println(fmt.Sprintf("Loss Batch %d = %.2f", e, loss / float32(len(trainingData))))
         }
 }
