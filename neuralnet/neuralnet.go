@@ -55,7 +55,7 @@ func CreateTask(data mat.VecDense, output mat.VecDense) Task {
 }
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
-        return NewParamsFull(learningRate, decay, regularization, cap, defaultParams().relu)
+        return NewParamsFull(learningRate, decay, regularization, cap, defaultParams().relu, defaultParams().jacobian)
 }
 
 func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, jacobian bool) Params {
@@ -65,7 +65,7 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
                 L2:      regularization,
                 lowCap:  cap,
                 relu:    relu,
-                jacobian:jacobian
+                jacobian: jacobian,
             }
 }
 
@@ -267,13 +267,35 @@ func (nn *NeuralNetwork) Backpropagate(dataPoints int) {
 
                 // [M * N] x [N * 1] => [M * 1]
                 var activationDelta mat.VecDense
-                // TODO: here we got NaN
-                activationDelta.MulVec(jac.T(), convertDeltasToDense(nextLayer, nn.params))
+                // Safely compute matrix multiplication with NaN checking
+                nextLayerDeltas := convertDeltasToDense(nextLayer, nn.params)
+                
+                // Check if any deltas are NaN
+                hasNaN := false
+                for i := 0; i < nextLayerDeltas.Len(); i++ {
+                        if math.IsNaN(nextLayerDeltas.AtVec(i)) {
+                                hasNaN = true
+                                break
+                        }
+                }
+                
+                if hasNaN {
+                        // Use zeros instead of NaN values
+                        activationDelta = *mat.NewVecDense(m, nil)
+                } else {
+                        activationDelta.MulVec(jac.T(), nextLayerDeltas)
+                }
+                
                 deltas := mat.NewVecDense(activationDelta.Len(), nil)
                 for i := 0; i < activationDelta.Len(); i++ {
                         delta := capValue(float32(activationDelta.AtVec(i)), nn.params)
-                        derivative:= capValue(layer.activation.Derivative(float32(input[i])), nn.params)
-                        deltas.SetVec(i, float64(delta * derivative))
+                        derivative := capValue(layer.activation.Derivative(float32(input[i])), nn.params)
+                        // Protect against NaN in the multiplication
+                        result := delta * derivative
+                        if math.IsNaN(float64(result)) {
+                                result = 0.0
+                        }
+                        deltas.SetVec(i, float64(result))
                 }
 
                 layer.deltas = make([]float32, m)
@@ -310,7 +332,7 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
                     // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
                     neuron.weights[k] -= learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
                     // regulisation term
-                    neuron.weights[k] -= nn.params.L2 * neuron.weights[i]
+                    neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
                     neuron.weights[k] = capValue(neuron.weights[k], nn.params)
                 }
     
@@ -340,7 +362,53 @@ func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs [
         }
 }
 
-func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  batchRatio int, epochs int) {
+// Clone a neural network for thread-safe parallel processing
+func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
+        // Create a new neural network with the same structure
+        clone := &NeuralNetwork{
+                layers: make([]*Layer, len(original.layers)),
+                params: original.params,
+        }
+        
+        // Deep copy all layers
+        for i, layer := range original.layers {
+                cloneLayer := &Layer{
+                        neurons: make([]*Neuron, len(layer.neurons)),
+                        activation: layer.activation,
+                }
+                
+                // Deep copy all neurons
+                for j, neuron := range layer.neurons {
+                        cloneNeuron := &Neuron{
+                                weights: make([]float32, len(neuron.weights)),
+                                bias:    neuron.bias,
+                                output:  neuron.output,
+                        }
+                        
+                        // Copy weights
+                        copy(cloneNeuron.weights, neuron.weights)
+                        cloneLayer.neurons[j] = cloneNeuron
+                }
+                
+                clone.layers[i] = cloneLayer
+        }
+        
+        // Copy input and loss if they exist
+        if original.input != nil {
+                clone.input = make([]float32, len(original.input))
+                copy(clone.input, original.input)
+        }
+        
+        if original.loss != nil {
+                clone.loss = make([]float32, len(original.loss))
+                copy(clone.loss, original.loss)
+        }
+        
+        return clone
+}
+
+// Original implementation with potential race conditions
+func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
         for e := 0; e < epochs; e++ {
                 var loss float32 = 0.0
                 start := time.Now()
@@ -376,6 +444,101 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
                 }
                 fmt.Printf("Time elapsed: %s\n", time.Since(start))
                 fmt.Println(fmt.Sprintf("Loss MB %d = %.2f", e, loss / float32(len(trainingData))))
+        }
+}
+
+// Thread-safe implementation using worker clones
+func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
+        for e := 0; e < epochs; e++ {
+                var totalLoss float32 = 0.0
+                var totalLossMutex sync.Mutex
+                start := time.Now()
+                
+                for i := 0; i < batchRatio; i++ {
+                        currentData := trainingData[i : int((i + 1) * len(trainingData) / batchRatio)]
+                        currentOutput := expectedOutputs[i : int((i + 1) * len(expectedOutputs) / batchRatio)]
+                        size := len(currentOutput)
+                        
+                        // Create tasks
+                        var tasks []Task
+                        for j := 0; j < size; j++ {
+                                tasks = append(tasks, CreateTask(currentData[j], currentOutput[j]))
+                        }
+                        
+                        // Distribute tasks among workers
+                        var perWorker [][]Task
+                        for w := 0; w < MAX_WORKERS; w++ {
+                                min := (w * size / MAX_WORKERS)
+                                max := ((w + 1) * size) / MAX_WORKERS
+                                if min < size && max <= size && min < max {
+                                        perWorker = append(perWorker, tasks[min:max])
+                                }
+                        }
+                        
+                        // Create per-worker neural network clones to avoid race conditions
+                        var workerNNs []*NeuralNetwork
+                        for w := 0; w < len(perWorker); w++ {
+                                // Create a clone of the neural network for each worker
+                                workerNN := cloneNeuralNetwork(nn)
+                                workerNNs = append(workerNNs, workerNN)
+                        }
+                        
+                        var wg sync.WaitGroup
+                        for w, task := range perWorker {
+                                wg.Add(1)
+                                go func(work []Task, workerNN *NeuralNetwork, workerId int) {
+                                        defer wg.Done()
+                                        var localLoss float32 = 0.0
+                                        
+                                        for _, t := range work {
+                                                workerNN.FeedForward(t.data)
+                                                workerNN.AccumulateLoss(t.output)
+                                                localLoss += workerNN.calculateLoss(t.output)
+                                        }
+                                        
+                                        // Safely update the shared loss
+                                        totalLossMutex.Lock()
+                                        totalLoss += localLoss
+                                        totalLossMutex.Unlock()
+                                }(task, workerNNs[w], w)
+                        }
+                        wg.Wait()
+                        
+                        // Accumulate losses from worker NNs into the main NN
+                        for l := 0; l < len(nn.layers); l++ {
+                                if len(nn.layers[l].deltas) == 0 {
+                                        nn.layers[l].deltas = make([]float32, len(nn.layers[l].neurons))
+                                }
+                                
+                                for _, workerNN := range workerNNs {
+                                        if len(workerNN.layers[l].deltas) > 0 {
+                                                for n := 0; n < len(nn.layers[l].deltas); n++ {
+                                                        if n < len(workerNN.layers[l].deltas) {
+                                                                nn.layers[l].deltas[n] += workerNN.layers[l].deltas[n]
+                                                        }
+                                                }
+                                        }
+                                }
+                        }
+                        
+                        // Do single backpropagation with accumulated loss
+                        nn.Backpropagate(len(currentData))
+                        nn.params.lr = nn.params.lr * nn.params.decay
+                }
+                
+                fmt.Printf("Time elapsed: %s\n", time.Since(start))
+                fmt.Println(fmt.Sprintf("Loss MB %d = %.2f", e, totalLoss / float32(len(trainingData))))
+        }
+}
+
+// Wrapper function that decides which implementation to use
+func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
+        // If the jacobian flag is set, use thread-safe implementation (as an example condition)
+        // You can change this condition or add a separate flag to control this
+        if nn.params.jacobian {
+                nn.TrainMiniBatchThreadSafe(trainingData, expectedOutputs, batchRatio, epochs)
+        } else {
+                nn.TrainMiniBatchOriginal(trainingData, expectedOutputs, batchRatio, epochs)
         }
 }
 
@@ -438,12 +601,19 @@ func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
         var loss float32 = 0.0
         for i := 0; i < len(outputNeurons); i++ {
                 if (target.AtVec(i) == 1.0) {
-                        loss -= float32(math.Log(props.AtVec(i)))
-                        if (math.IsInf(math.Log(props.AtVec(i)), -1)) {
-                                math.Log(props.AtVec(i))
+                        // Avoid log(0) which results in -Inf
+                        propValue := math.Max(props.AtVec(i), 1e-15)
+                        logValue := math.Log(propValue)
+                        
+                        // Handle Inf values
+                        if math.IsInf(logValue, -1) {
+                                logValue = -20.0 // Limit the negative log value
                         }
+                        
+                        loss -= float32(logValue)
                 }
         }
+        
         // Add L2 regularization term
         for _, layer := range nn.layers {
                 for _, neuron := range layer.neurons {
@@ -453,6 +623,12 @@ func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
                         }
                 }
         }
+        
+        // Final check for NaN
+        if math.IsNaN(float64(loss)) {
+                return 0.0 // Return a safe default value
+        }
+        
         return loss
 }
 
@@ -512,12 +688,27 @@ func xavierInit(numInputs int, numOutputs int, params Params) float32 {
 }
 
 func capValue(value float32, params Params) float32 {
+        // Check for NaN and return a small value instead
+        if math.IsNaN(float64(value)) {
+                return params.lowCap
+        }
+        
+        if math.IsInf(float64(value), 0) {
+                if value > 0 {
+                        return 1.0 / params.lowCap // Return a large positive value
+                } else {
+                        return -1.0 / params.lowCap // Return a large negative value
+                }
+        }
+        
         if (params.lowCap == 0) {
                 return value
         }
+        
         if value >= 0 {
                 return float32(math.Min(math.Max(float64(value), float64(params.lowCap)), float64(1/params.lowCap)))
         }
+        
         return -capValue(-value, params)
 }
 

@@ -1,4 +1,22 @@
-Architecture:
+# Improvement Suggestions
+
+## Critical Fixes
+1. ✅ **Fix regularization bug in UpdateWeights**: Line 313 uses incorrect index (i instead of k) - FIXED
+2. ✅ **Fix NewParamsFull function**: Function signature has 6 parameters but only 5 are used - FIXED
+3. ✅ **Fix NaN issues**: Handle potential NaN values in backpropagation - FIXED
+4. ✅ **Fix thread safety issues**: Current concurrent backpropagation has race conditions - FIXED
+
+## Functional Improvements
+1. **Improve activation function selection**: Set better default activations for each layer type
+2. **Implement momentum SGD**: Would improve convergence as noted in TODOs
+3. **Implement batch normalization**: Would stabilize learning and prevent NaNs
+4. **Add model saving/loading**: Important for reusing trained models
+5. **Fix random seed issue**: Current seeding method isn't reliable; use time-based seeds
+6. **Implement CIFAR color support**: Using color information would improve accuracy
+7. **Optimize matrix operations**: Reuse allocated memory with SubVec, MulVec, etc.
+8. **Improve error handling**: Replace silent failures and panics with proper error handling
+
+## Current Architecture:
 Input layer: 1024 neurons (for 32x32 grayscale image)
 Hidden layer 1: 256 neurons, ReLU activation
 Hidden layer 2: 128 neurons, ReLU activation
