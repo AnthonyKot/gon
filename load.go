@@ -167,8 +167,12 @@ func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
         for j := 0; j < cols; j++ {
             // Calculate the grayscale value using the weighted average of RGB components
             r, g, b := rgbImage[0].At(i, j), rgbImage[1].At(i, j), rgbImage[2].At(i, j)
-            gray := 0.299*r + 0.587*g + 0.114*b
-            grayImage.Set(i, j, gray)
+            //gray := 0.299*r + 0.587*g + 0.114*b
+            //grayImage.Set(i, j, gray)
+            grey := uint8(0.299*r + 0.587*g + 0.114*b)
+            greyFloat := float64(grey) / 255.0
+            grayImage.Set(i, j, greyFloat)
+
         }
     }
 
@@ -189,7 +193,7 @@ func flaten(image mat.Dense) mat.VecDense {
 func converImagesToInputs(images [][]mat.Dense) []mat.VecDense {
 	inputs := make([]mat.VecDense, len(images))
 	for i := 0; i < len(inputs); i++ {
-		inputs[i] = flaten(RGBToBlackWhite(images[i]))
+		inputs[i] = flaten(images[i][0])
 	}
 	return inputs
 }

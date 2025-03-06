@@ -17,6 +17,7 @@ type Neuron struct {
         weights []float32
         bias    float32
         output  float32
+        momentum []float32
 }
 
 type Layer struct {
@@ -40,6 +41,7 @@ type Params struct {
         lowCap   float32
         relu     float32
         jacobian bool
+        bn float32
 }
 
 type Task struct {
@@ -66,7 +68,25 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
                 lowCap:  cap,
                 relu:    relu,
                 jacobian: jacobian,
+                bn: 0.0,
             }
+}
+
+func defaultParams() *Params {
+        return &Params{
+            lr:      0.001,
+            decay:   0.8,
+            L2:      0,
+            lowCap:  0,
+            relu:    0,
+            jacobian:false,
+            bn: 0.0,
+        }
+}
+
+func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
+        params := defaultParams()
+        return initialise(inputSize, hidden, outputSize, *params)
 }
 
 func initialise(inputSize int, hidden []int, outputSize int, params Params) *NeuralNetwork {
@@ -82,22 +102,17 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                 neurons: make([]*Neuron, inputSize),
                 activation: Linear{},
         }
-        for j := 0; j < inputSize; j++ {
-                first.neurons[j] = &Neuron{
-                        weights: make([]float32, inputSize),
-                        bias:    xavierInit(inputSize, hidden[0], nn.params),
-                }
-                // TODO: use gauss to init weights
                 for k := range first.neurons[j].weights {
                         first.neurons[j].weights[k] = xavierInit(inputSize, hidden[0], nn.params)
                 }
+                first.neurons[j].momentum = make([]float32, inputSize)
         }
         nn.layers[0] = first
 
         for i, size := range hidden {
                 layer := &Layer{
                         neurons: make([]*Neuron, size),
-                        activation:Linear{},
+                        activation: ReLU{},
                 }
                 out := 0
                 if i < len(hidden) - 1 {
@@ -114,12 +129,14 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                         for k := range layer.neurons[j].weights {
                                 layer.neurons[j].weights[k] =  xavierInit(size, out, nn.params)
                         }
+                        layer.neurons[j].momentum = make([]float32, len(nn.layers[i].neurons))
+
                 }
                 nn.layers[i + 1] = layer
         }
         output := &Layer{
                 neurons: make([]*Neuron, outputSize),
-                activation: Linear{},
+                activation: NewLeakyReLU(0.1),
         }
         for l := 0; l < outputSize; l++ {
                 output.neurons[l] = &Neuron{
@@ -130,6 +147,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                 for k := range output.neurons[l].weights {
                         output.neurons[l].weights[k] = xavierInit(outputSize, outputSize, nn.params)
                 }
+                output.neurons[l].momentum = make([]float32, len(nn.layers[len(nn.layers) - 2].neurons))
         }
         nn.layers[len(hidden) + 1] = output
 
@@ -163,14 +181,6 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
 
 func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunction) {
         nn.layers[layerIndex].activation = activation
-}
-
-func seed(inputSize int, hidden []int, outputSize int) int {
-        seed := inputSize
-        for _, h := range(hidden) {
-                seed = seed + h
-        }
-        return seed + outputSize
 }
 
 func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
@@ -314,6 +324,7 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
                 for k := range neuron.weights {
                         // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
                         neuron.weights[k] -= learningRate * nn.layers[0].deltas[j] * nn.input[k]
+                        neuron.momentum[k] = 0.9 * neuron.momentum[k] + 0.1 * learningRate * nn.layers[0].deltas[j] * nn.input[k]
                         // regulisation term
                         neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
                         neuron.weights[k] = capValue(neuron.weights[k], nn.params)
@@ -327,10 +338,15 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
             currentLayer := nn.layers[i]
             previousLayer := nn.layers[i-1]
 
-            for j, neuron := range currentLayer.neurons {
+	for i := 1; i < len(nn.layers); i++ {
+            currentLayer := nn.layers[i]
+            previousLayer := nn.layers[i-1]
+
+	for j, neuron := range currentLayer.neurons {
                 for k := range neuron.weights {
                     // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
                     neuron.weights[k] -= learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
+                    neuron.momentum[k] = 0.9 * neuron.momentum[k] + 0.1 * learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
                     // regulisation term
                     neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
                     neuron.weights[k] = capValue(neuron.weights[k], nn.params)
@@ -340,7 +356,6 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
                 neuron.bias -= learningRate * currentLayer.deltas[j]
             }
         }
-}
 
 func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
         batchSize := 1
@@ -533,13 +548,7 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
 
 // Wrapper function that decides which implementation to use
 func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-        // If the jacobian flag is set, use thread-safe implementation (as an example condition)
-        // You can change this condition or add a separate flag to control this
-        if nn.params.jacobian {
-                nn.TrainMiniBatchThreadSafe(trainingData, expectedOutputs, batchRatio, epochs)
-        } else {
-                nn.TrainMiniBatchOriginal(trainingData, expectedOutputs, batchRatio, epochs)
-        }
+        nn.TrainMiniBatchThreadSafe(trainingData, expectedOutputs, batchRatio, epochs)
 }
 
 func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
@@ -654,10 +663,116 @@ func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
         return dense
 }
 
+func (nn *NeuralNetwork) Backpropagate(dataPoints int) {
+        outputLayer := nn.layers[len(nn.layers) - 1]
+        outputLayer.deltas = make([]float32, len(outputLayer.neurons))
+
+        // use accumulated loss deravative as delta for the last layer
+        for i := 0; i < len(outputLayer.neurons); i++ {
+                outputLayer.deltas[i] = nn.loss[i] / float32(dataPoints)
+                outputLayer.deltas[i] = capValue(outputLayer.deltas[i], nn.params)
+        }
+        for i := 0; i < len(outputLayer.neurons); i++ {
+                nn.loss[i] = 0
+        }
+
+        for i := len(nn.layers) - 2; i >= 0; i-- {
+                // M neurons neurons to calculate deltas for    
+                layer := nn.layers[i]
+                m := len(layer.neurons)
+                // N neurons to propagate error from
+                nextLayer := nn.layers[i + 1]
+                n := len(nextLayer.neurons)
+
+                // N * M
+                weights := convertWeightsDense(nextLayer.neurons)
+
+                input := make([]float64, m)
+                for i, neuron := range layer.neurons {
+                        input[i] = float64(neuron.output)
+                }
+
+                jac := mat.NewDense(n, m, nil)
+                if (nn.params.jacobian) {
+                        // N * 1
+                        bias := convertBiasToDense(nextLayer.neurons)
+                        // jac is delta(ActicatonN)/delta(OutputM)
+                        fd.Jacobian(jac,
+                                func(next, prev []float64) {
+                                        var nextLayerOutputs mat.VecDense
+                                        nextLayerOutputs.MulVec(weights, mat.NewVecDense(m, prev))
+                                        nextLayerOutputs.AddVec(bias, &nextLayerOutputs)
+                                        for i, _ := range next {
+                                                next[i] = nextLayerOutputs.AtVec(i)
+                                        }
+                                },
+                                input,
+                                &fd.JacobianSettings{
+                                        Formula:    fd.Central,
+                                        // Concurrent: true ?
+                                        Concurrent: false,
+                                })
+                } else {
+                        jac = weights
+                }
+
+                // [M * N] x [N * 1] => [M * 1]
+                var activationDelta mat.VecDense
+                // Safely compute matrix multiplication with NaN checking
+                nextLayerDeltas := convertDeltasToDense(nextLayer, nn.params)
+                
+                // Check if any deltas are NaN
+                hasNaN := false
+                for i := 0; i < nextLayerDeltas.Len(); i++ {
+                        if math.IsNaN(nextLayerDeltas.AtVec(i)) {
+                                hasNaN = true
+                                break
+                        }
+                }
+                
+                if hasNaN {
+                        // Use zeros instead of NaN values
+                        activationDelta = *mat.NewVecDense(m, nil)
+                } else {
+                        activationDelta.MulVec(jac.T(), nextLayerDeltas)
+                }
+                
+                deltas := mat.NewVecDense(activationDelta.Len(), nil)
+                for i := 0; i < activationDelta.Len(); i++ {
+                        delta := capValue(float32(activationDelta.AtVec(i)), nn.params)
+                        derivative := capValue(layer.activation.Derivative(float32(input[i])), nn.params)
+                        // Protect against NaN in the multiplication
+                        result := delta * derivative
+                        if math.IsNaN(float64(result)) {
+                                result = 0.0
+                        }
+                        deltas.SetVec(i, float64(result))
+                }
+
+                layer.deltas = make([]float32, m)
+                for i, _ := range layer.deltas {
+                        layer.deltas[i] = float32(deltas.AtVec(i))
+                        layer.deltas[i] = capValue(layer.deltas[i], nn.params)
+                }
+        }
+        // TODO can be changed in real time based on schedule
+        nn.UpdateWeights(nn.params.lr)
+}
+func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
+        dense := mat.NewVecDense(len(neurons), nil)
+        for i, neuron := range neurons {
+                dense.SetVec(i, float64(neuron.bias))
+        }
+        return dense
+}
 func convertDeltasToDense(layer *Layer, params Params) *mat.VecDense {
         dense := mat.NewVecDense(len(layer.deltas), nil)
         for i, d := range layer.deltas {
-                dense.SetVec(i, float64(capValue(d, params)))
+                if math.IsNaN(float64(d)) {
+                        dense.SetVec(i, float64(params.lowCap))
+                } else {
+                        dense.SetVec(i, float64(capValue(d, params)))
+                }
         }
         return dense
 }
@@ -732,8 +847,46 @@ func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, 
         return selectedInputs, selectedLabels
 }
 
- // Debug
- func (l *Layer) String() string {
+import (
+        "fmt"
+	"strings"
+        "math"
+        "sync"
+        "time"
+        "math/rand"
+        "gonum.org/v1/gonum/diff/fd"
+        "gonum.org/v1/gonum/mat"
+        "encoding/json"
+        "os"
+)
+func (nn *NeuralNetwork) Save(filename string) {
+	file, err := os.Create(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	err = encoder.Encode(nn)
+	if err != nil {
+		panic(err)
+	}
+	println("Model saved as " + filename)
+}
+func loadModel(filename string) {
+	file, err := os.Open(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+        var nn *NeuralNetwork
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&nn)
+	if err != nil {
+		panic(err)
+	}
+	println("Model load as " + filename)
+}
+func (l *Layer) String() string {
 	var sb strings.Builder
 
 	// Print each neuron
