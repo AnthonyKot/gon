@@ -120,3 +120,49 @@ TODO?:
 func init() {
 	mat64.Register(goblas.Blas{})
 }
+
+## Code Description
+
+### Overview
+
+This code implements a simple neural network for image classification using the CIFAR-10 dataset. The network is written in Go and utilizes the Gonum library for matrix operations.
+
+### Key Components
+
+-   **Neural Network (`neuralnet/neuralnet.go`):**
+    -   The core of the project. Implements a feedforward neural network.
+    -   Supports various activation functions (`neuralnet/activations.go`) like ReLU, LeakyReLU, Sigmoid, and Tanh.
+    -   Includes training algorithms like SGD and Mini-Batch.
+    -   Now supports saving/loading.
+    - Includes momentum and batch normalisation.
+- **Data Loading (`load.go`):**
+    -   Handles loading and preprocessing the CIFAR-10 dataset.
+    -   Includes functions to convert RGB images to grayscale and flatten them.
+- **Activation Functions (`neuralnet/activations.go`):**
+    -   Defines various activation functions and their derivatives.
+### Usage
+
+The code is intended to be used as a library for learning and experimenting with neural networks.
+
+### Improvements
+
+The following improvements have been implemented:
+
+- **Error Handling**: Proper error handling is implemented instead of panics.
+- **Thread Safety**: Race conditions are now handled in Mini-Batch.
+- **Momentum SGD**: Momentum has been added.
+- **Batch Normalization**: Batch normalization has been added.
+- **Model Saving/Loading**: Now the model can be saved and loaded.
+
+### Future Work
+-   **CIFAR color support**: Using color information would improve accuracy
+-   **Optimize matrix operations**: Reuse allocated memory with SubVec, MulVec, etc.
+
+### Installation
+
+To use this code you must copy and paste:
+
+Copy and paste: Copy the contents of `neuralnet` directory into your own project.
+
+Import as a module: Place `neuralnet` directory within your project and use it as a module:
+[end of README.md]
