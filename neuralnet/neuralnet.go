@@ -373,10 +373,12 @@ func (nn *NeuralNetwork) Output() []float32 {
 func (nn *NeuralNetwork) Predict(data mat.VecDense) int {
         nn.FeedForward(data)
         props := nn.calculateProps()
-        max := props.AtVec(0)
+        maxVal := props.AtVec(0)
         idx := 0
-        for i := 0; i < props.Len(); i++ {
-                if max < props.AtVec(i) {
+        for i := 1; i < props.Len(); i++ {
+                val := props.AtVec(i)
+                if val > maxVal {
+                        maxVal = val
                         idx = i
                 }
         }
