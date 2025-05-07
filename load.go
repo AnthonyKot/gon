@@ -279,6 +279,101 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expected
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
+func runTrainingSession(
+	useFloat64Calc bool,
+	inputs []mat.VecDense,
+	labels []mat.VecDense,
+	imgs [][]mat.Dense,
+	descr []string,
+	from int,
+	to int,
+	epochs int,
+	trainToValidationRatio int,
+	miniBatchSize int,
+	baseNumWorkers int,
+	initialLR float32,
+	initialDecay float32,
+	initialL2 float32,
+	initialLowCap float32,
+	initialRelu float32,
+	initialMomentum float32,
+	initialBN float32,
+) {
+	fmt.Printf("\n--- Starting Training Session (UseFloat64 for Calculations: %t) ---\n", useFloat64Calc)
+
+	// Create Params for this session
+	// Note: NewParamsFull now correctly includes the useFloat64 flag
+	currentParams := neuralnet.NewParamsFull(
+		initialLR,
+		initialDecay,
+		initialL2,
+		initialLowCap,
+		initialRelu,
+		initialMomentum,
+		initialBN,    // bn
+		useFloat64Calc, // UseFloat64
+	)
+
+	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, currentParams)
+	// Ensure the optimizer is set if NewNeuralNetwork doesn't set a default one
+	// or if a specific one is desired. DefaultNeuralNetwork sets SGD.
+	// If NewNeuralNetwork is used directly, optimizer might need to be set manually:
+	// nn.SetOptimizer(&neuralnet.SGD{}) // Example if needed
+
+	j := 0 // Used for saving sample images
+	numWorkers := baseNumWorkers
+	if numWorkers > neuralnet.MAX_WORKERS {
+		numWorkers = neuralnet.MAX_WORKERS
+	}
+	fmt.Printf("Number of workers for mini-batch processing: %d\n", numWorkers)
+	fmt.Println("---")
+
+	totalTrainingStartTime := time.Now()
+	var totalEpochsDuration time.Duration
+
+	for i := 0; i < epochs; i++ {
+		epochStartTime := time.Now()
+		// Switched to TrainMiniBatch, now with numWorkers
+		// The '1' for epochs in TrainMiniBatch means it processes the dataset once per outer loop iteration.
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
+		for sample := 0; sample < 3; sample++ {
+			// Select a random validation sample to predict and save
+			validationStart := to
+			validationEnd := to + ((to - from) / trainToValidationRatio)
+			if validationEnd > len(inputs) { // Ensure we don't go out of bounds
+				validationEnd = len(inputs)
+			}
+			if validationStart >= validationEnd { // Skip if validation set is empty or invalid
+				fmt.Println("Skipping image saving due to invalid validation range.")
+				break
+			}
+			j = validationStart + rand.Intn(validationEnd-validationStart)
+
+			pred := nn.Predict(inputs[j])
+			saveImg(imgs, labels, descr, j, pred)
+			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
+		}
+		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n",
+			accuracy(nn, inputs, labels, from, to, numWorkers),
+			accuracy(nn, inputs, labels, to, to+((to-from)/trainToValidationRatio), numWorkers),
+		)
+		epochDuration := time.Since(epochStartTime)
+		totalEpochsDuration += epochDuration
+		fmt.Printf("Epoch %d duration: %s\n", i, epochDuration)
+		fmt.Println()
+	}
+
+	totalTrainingDuration := time.Since(totalTrainingStartTime)
+	averageEpochDuration := time.Duration(0)
+	if epochs > 0 {
+		averageEpochDuration = totalEpochsDuration / time.Duration(epochs)
+	}
+	fmt.Println("---")
+	fmt.Printf("Total training duration for session (UseFloat64: %t): %s\n", useFloat64Calc, totalTrainingDuration)
+	fmt.Printf("Average epoch duration for session (UseFloat64: %t): %s\n", useFloat64Calc, averageEpochDuration)
+	fmt.Println("---")
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
@@ -339,42 +434,39 @@ func main() {
 	if numWorkers > neuralnet.MAX_WORKERS {
 		numWorkers = neuralnet.MAX_WORKERS
 	}
-	fmt.Printf("Number of workers for mini-batch processing: %d\n", numWorkers)
-	fmt.Println("---")
+	// Fetch default parameter values to use as base for both sessions
+	// We need a way to get these defaults. Let's assume neuralnet.DefaultParams() exists
+	// or we hardcode them based on current defaults if a public getter isn't available.
+	// For now, let's use the values from neuralnet.defaultParams() directly.
+	// These are: lr: 0.01, decay: 0.95, L2: 1e-4, lowCap: 0, relu: 0, momentum: 0.9, bn: 0.0
+	initialLR := float32(0.01)
+	initialDecay := float32(0.95)
+	initialL2 := float32(1e-4)
+	initialLowCap := float32(0.0)
+	initialRelu := float32(0.0)      // Assuming this is the default for LeakyReLU alpha if relu param is for that
+	initialMomentum := float32(0.9)
+	initialBN := float32(0.0)
 
-	totalTrainingStartTime := time.Now()
-	var totalEpochsDuration time.Duration
+	baseNumWorkers := runtime.NumCPU() // Use number of available CPUs for workers
 
-	for i := 0; i < epochs; i++ {
-		epochStartTime := time.Now()
-		// Switched to TrainMiniBatch, now with numWorkers
-		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
-		for sample := 0; sample < 3; sample++ {
-			j = to + rand.Intn((to-from)/train_to_validation)
-			pred := nn.Predict(inputs[j])
-			saveImg(imgs, labels, descr, j, pred)
-			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
-		}
-		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n",
-			accuracy(nn, inputs, labels, from, to, numWorkers),
-			accuracy(nn, inputs, labels, to, to+((to-from)/train_to_validation), numWorkers),
-		)
-		epochDuration := time.Since(epochStartTime)
-		totalEpochsDuration += epochDuration
-		fmt.Printf("Epoch %d duration: %s\n", i, epochDuration)
-		fmt.Println()
-	}
+	// Run session with UseFloat64 = false
+	runTrainingSession(
+		false, // useFloat64Calc
+		inputs, labels, imgs, descr,
+		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
+		initialLR, initialDecay, initialL2, initialLowCap, initialRelu, initialMomentum, initialBN,
+	)
 
-	totalTrainingDuration := time.Since(totalTrainingStartTime)
-	averageEpochDuration := time.Duration(0)
-	if epochs > 0 {
-		averageEpochDuration = totalEpochsDuration / time.Duration(epochs)
-	}
-	fmt.Println("---")
-	fmt.Printf("Total training duration: %s\n", totalTrainingDuration)
-	fmt.Printf("Average epoch duration: %s\n", averageEpochDuration)
-	fmt.Println("---")
+	// Run session with UseFloat64 = true
+	runTrainingSession(
+		true, // useFloat64Calc
+		inputs, labels, imgs, descr,
+		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
+		initialLR, initialDecay, initialL2, initialLowCap, initialRelu, initialMomentum, initialBN,
+	)
 
+	// Original commented out code
+	// j := 0 // This j would be uninitialized if only runTrainingSession is called.
 	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
 	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
 	// j = to + rand.Intn(to - from / 2)

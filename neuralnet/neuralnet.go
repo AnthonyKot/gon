@@ -69,21 +69,21 @@ func CreateTask(data mat.VecDense, output mat.VecDense) Task {
 }
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
-	// Calls NewParamsFull, providing default values for relu, momentum, and bn
+	// Calls NewParamsFull, providing default values for relu, momentum, bn, and UseFloat64
 	defaults := defaultParams()
-	return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.MomentumCoefficient, defaults.bn)
+	return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.MomentumCoefficient, defaults.bn, defaults.UseFloat64)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, momentumCoefficient float32, bn float32) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, momentumCoefficient float32, bn float32, useFloat64 bool) Params {
 	return Params{
-		lr:     learningRate,
-		decay:  decay,
-		L2:     regularization,
-		lowCap: cap,
-		relu:   relu,
-		// jacobian:           jacobian, // Removed
+		lr:                  learningRate,
+		decay:               decay,
+		L2:                  regularization,
+		lowCap:              cap,
+		relu:                relu,
 		bn:                  bn,
 		MomentumCoefficient: momentumCoefficient,
+		UseFloat64:          useFloat64,
 	}
 }
 
