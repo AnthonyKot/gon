@@ -80,7 +80,7 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
 func defaultParams() *Params {
         return &Params{
             lr:      0.01,
-            decay:   0.8,
+            decay:   0.95, // Reduced decay rate
             L2:      0,
             lowCap:  0,
             relu:    0,
@@ -153,7 +153,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
         }
         output := &Layer{
                 neurons: make([]*Neuron, outputSize),
-                activation: NewLeakyReLU(0.1),
+                activation: Linear{}, // Changed to Linear activation for the output layer
         }
         for l := 0; l < outputSize; l++ {
                 output.neurons[l] = &Neuron{
