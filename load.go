@@ -268,7 +268,7 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expected
 				if startIdx >= endIdx {
 					return
 				}
-				
+
 				workerNN := nn.Clone() // Each worker gets its own clone
 				workerCorrect := 0
 				for i := startIdx; i < endIdx; i++ {
