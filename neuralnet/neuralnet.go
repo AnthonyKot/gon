@@ -190,34 +190,16 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 		neuron.output = capValue(neuron.output, nn.params)
 	}
 	// nn.input is already set.
-
-	// Process hidden and output layers (i >= 1)
+	// Process hidden and output layers (i >= 1) using direct loops
 	for i := 1; i < len(nn.layers); i++ {
-		currentLayer := nn.layers[i]
-		prevLayer := nn.layers[i-1]
-
-		// 1. Get previous layer's activations (A)
-		prevLayerOutputData := make([]float64, len(prevLayer.neurons))
-		for k, prevNeuron := range prevLayer.neurons {
-			prevLayerOutputData[k] = float64(prevNeuron.output)
-		}
-		prevLayerActivations := mat.NewVecDense(len(prevLayer.neurons), prevLayerOutputData)
-
-		// 2. Construct current layer's weight matrix (W) and bias vector (B)
-		//    NOTE: This construction adds overhead in each FeedForward pass.
-		weightsMatrix := convertWeightsToDense(currentLayer)
-		biasVector := convertBiasesToVecDense(currentLayer)
-
-		// 3. Calculate Z = W * A + B
-		preActivationOutputs := mat.NewVecDense(len(currentLayer.neurons), nil)
-		preActivationOutputs.MulVec(weightsMatrix, prevLayerActivations) // Z_intermediate = W * A
-		preActivationOutputs.AddVec(preActivationOutputs, biasVector)    // Z = Z_intermediate + B
-
-		// 4. Apply activation and store results in neuron.output
-		preActivationData := preActivationOutputs.RawVector().Data
-		for k, neuron := range currentLayer.neurons {
-			neuron.output = float32(preActivationData[k]) // Store pre-activation temporarily if needed, or directly activate
-			neuron.output = currentLayer.activation.Activate(neuron.output)
+		for _, neuron := range nn.layers[i].neurons {
+			// Use float64 for intermediate sum
+			var sum64 float64 = float64(neuron.bias)
+			for j := 0; j < len(nn.layers[i-1].neurons); j++ {
+				sum64 += float64(nn.layers[i-1].neurons[j].output) * float64(neuron.weights[j])
+			}
+			neuron.output = float32(sum64)
+			neuron.output = nn.layers[i].activation.Activate(neuron.output)
 			neuron.output = capValue(neuron.output, nn.params)
 		}
 	}
@@ -673,33 +655,9 @@ func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
 	return loss
 }
 
-// Helper function to convert a layer's weights into a mat.Dense matrix
-// Rows = number of neurons in the layer, Cols = number of weights per neuron (inputs)
-func convertWeightsToDense(layer *Layer) *mat.Dense {
-	if len(layer.neurons) == 0 {
-		return mat.NewDense(0, 0, nil) // Handle empty layer
-	}
-	numNeurons := len(layer.neurons)
-	numWeightsPerNeuron := len(layer.neurons[0].weights)
-	weightsData := make([]float64, numNeurons*numWeightsPerNeuron)
+// convertWeightsToDense removed as unused.
 
-	for i, neuron := range layer.neurons {
-		for j, weight := range neuron.weights {
-			weightsData[i*numWeightsPerNeuron+j] = float64(weight)
-		}
-	}
-	return mat.NewDense(numNeurons, numWeightsPerNeuron, weightsData)
-}
-
-// Helper function to convert a layer's biases into a mat.VecDense vector
-func convertBiasesToVecDense(layer *Layer) *mat.VecDense {
-	numNeurons := len(layer.neurons)
-	biasesData := make([]float64, numNeurons)
-	for i, neuron := range layer.neurons {
-		biasesData[i] = float64(neuron.bias)
-	}
-	return mat.NewVecDense(numNeurons, biasesData)
-}
+// convertBiasesToVecDense removed as unused.
 
 
 // stableSoftmax computes softmax in a numerically stable way.
