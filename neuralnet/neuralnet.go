@@ -511,9 +511,10 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 	if outputLayer.deltas == nil || len(outputLayer.deltas) != len(outputLayer.neurons) {
 		outputLayer.deltas = make([]float32, len(outputLayer.neurons))
 	}
+	errVecData := errVec.RawVector().Data // Get raw data from errVec
 	for j := 0; j < len(outputLayer.neurons); j++ {
 		// For a single sample, the delta is the error component (softmax_output - target_j).
-		outputLayer.deltas[j] = capValue(float32(errVec.AtVec(j)), nn.params)
+		outputLayer.deltas[j] = capValue(float32(errVecData[j]), nn.params) // Use raw data
 	}
 
 	// Propagate deltas backward through hidden layers
@@ -614,10 +615,11 @@ func (nn *NeuralNetwork) Output() []float32 {
 func (nn *NeuralNetwork) Predict(data mat.VecDense) int {
 	nn.FeedForward(data)
 	props := nn.calculateProps()
-	maxVal := props.AtVec(0)
+	propsData := props.RawVector().Data // Get raw data
+	maxVal := propsData[0]              // Access raw data
 	idx := 0
-	for i := 1; i < props.Len(); i++ {
-		val := props.AtVec(i)
+	for i := 1; i < len(propsData); i++ { // Iterate using len of slice
+		val := propsData[i]             // Access raw data
 		if val > maxVal {
 			maxVal = val
 			idx = i
