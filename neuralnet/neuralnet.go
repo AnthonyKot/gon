@@ -41,6 +41,7 @@ type NeuralNetwork struct {
 	input                   []float32
 	params                  Params
 	prevLayerOutputsBuffer []float32 // Buffer for backpropagation
+	optimizer               Optimizer  // Pluggable optimizer interface
 }
 
 type Params struct {
@@ -100,7 +101,9 @@ func defaultParams() *Params {
 
 func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
 	params := defaultParams()
-	return initialise(inputSize, hidden, outputSize, *params)
+	nn := initialise(inputSize, hidden, outputSize, *params)
+	nn.optimizer = &SGD{} // Set default optimizer
+	return nn
 }
 
 func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
