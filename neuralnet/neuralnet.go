@@ -74,7 +74,7 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
 
 func defaultParams() *Params {
         return &Params{
-            lr:      0.001,
+            lr:      0.01,
             decay:   0.8,
             L2:      0,
             lowCap:  0,
