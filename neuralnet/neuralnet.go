@@ -207,7 +207,7 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 		for j := 0; j < len(nn.input); j++ { // Iterate over nn.input
 			neuron.output += nn.input[j] * neuron.weights[j] // Use nn.input directly
 		}
-		neuron.output = nn.layers[0].activation.Activate(neuron.output)
+		neuron.output = nn.layers[0].activation.Activate(neuron.output, nn.params.UseFloat64)
 		neuron.output = capValue(neuron.output, nn.params)
 	}
 	// nn.input is already set.
@@ -217,7 +217,7 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 			for j := 0; j < len(nn.layers[i-1].neurons); j++ {
 				neuron.output += nn.layers[i-1].neurons[j].output * neuron.weights[j]
 			}
-			neuron.output = nn.layers[i].activation.Activate(neuron.output)
+			neuron.output = nn.layers[i].activation.Activate(neuron.output, nn.params.UseFloat64)
 			neuron.output = capValue(neuron.output, nn.params)
 		}
 	}
@@ -554,7 +554,7 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 				errorSumTimesWeight += nextNeuron.weights[j] * nextLayer.deltas[k]
 			}
 			// Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
-			derivative := layer.activation.Derivative(neuron.output) // neuron.output is from current sample's FeedForward
+			derivative := layer.activation.Derivative(neuron.output, nn.params.UseFloat64) // neuron.output is from current sample's FeedForward
 			layer.deltas[j] = capValue(errorSumTimesWeight*derivative, nn.params)
 		}
 	}
