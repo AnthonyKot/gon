@@ -103,9 +103,9 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 	numHiddenLayers := len(hiddenConfig)
 	// Total processing layers = number of hidden layers + 1 output layer
 	nn := &NeuralNetwork{
-		layers: make([]*Layer, numHiddenLayers+1),
-		params: params,
-		input:  make([]float32, inputSize), // Preallocate input slice for FeedForward
+		Layers: make([]*Layer, numHiddenLayers+1), // Exported field name
+		Params: params,                            // Exported field name
+		Input:  make([]float32, inputSize),        // Exported field name
 	}
 
 	// Determine max size for prevLayerOutputsBuffer.
@@ -227,33 +227,25 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 	}
 	fBatchSize := float32(batchSize)
 
-	for _, layer := range nn.layers {
-		for _, neuron := range layer.neurons {
+	for _, layer := range nn.Layers { // Exported field name
+		for _, neuron := range layer.Neurons { // Exported field name
 			// Update weights
-			if neuron.accumulatedWeightGradients != nil { // Check if initialized
-				for wIdx := range neuron.weights {
-					// Calculate average gradient for this weight over the batch.
-					avgGrad64 := float64(neuron.accumulatedWeightGradients[wIdx]) / float64(fBatchSize)
-					// Add L2 regularization gradient component: lambda * weight
-					// This penalizes large weights to prevent overfitting.
-					avgGrad64 += float64(nn.params.L2) * float64(neuron.weights[wIdx])
+			if neuron.AccumulatedWeightGradients != nil { // Exported field name
+				for wIdx := range neuron.Weights { // Exported field name
+					avgGrad64 := float64(neuron.AccumulatedWeightGradients[wIdx]) / float64(fBatchSize) // Exported field name
+					avgGrad64 += float64(nn.Params.L2) * float64(neuron.Weights[wIdx]) // Exported field names
 
-					// Apply momentum update: new_momentum = momentum_coeff * old_momentum + learning_rate * gradient
-					// Momentum helps accelerate convergence and overcome local minima.
-					momentum64 := float64(nn.params.MomentumCoefficient)*float64(neuron.momentum[wIdx]) + float64(learningRate)*avgGrad64
-					neuron.momentum[wIdx] = float32(momentum64)
-					// Update weight: weight = weight - new_momentum
-					neuron.weights[wIdx] = float32(float64(neuron.weights[wIdx]) - momentum64)
-					neuron.weights[wIdx] = capValue(neuron.weights[wIdx]) // Cap extreme values
+					momentum64 := float64(nn.Params.MomentumCoefficient)*float64(neuron.Momentum[wIdx]) + float64(learningRate)*avgGrad64 // Exported field names
+					neuron.Momentum[wIdx] = float32(momentum64) // Exported field name
+					neuron.Weights[wIdx] = float32(float64(neuron.Weights[wIdx]) - momentum64) // Exported field name
+					neuron.Weights[wIdx] = capValue(neuron.Weights[wIdx]) // Exported field name
 				}
 			}
 
-			// Update bias (using float64 intermediate)
-			// Calculate average gradient for bias over the batch.
-			avgBiasGrad64 := float64(neuron.accumulatedBiasGradient) / float64(fBatchSize)
-			// Apply simple gradient descent step for bias (momentum could also be added here).
-			neuron.bias = float32(float64(neuron.bias) - float64(learningRate)*avgBiasGrad64)
-			neuron.bias = capValue(neuron.bias) // Cap extreme values
+			// Update bias
+			avgBiasGrad64 := float64(neuron.AccumulatedBiasGradient) / float64(fBatchSize) // Exported field name
+			neuron.Bias = float32(float64(neuron.Bias) - float64(learningRate)*avgBiasGrad64) // Exported field name
+			neuron.Bias = capValue(neuron.Bias) // Exported field name
 		}
 	}
 }
@@ -585,10 +577,10 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 // TrainBatch function removed as unused (superseded by TrainMiniBatch).
 
 func (nn *NeuralNetwork) Output() []float32 {
-	outputLayer := nn.layers[len(nn.layers)-1].neurons
+	outputLayer := nn.Layers[len(nn.Layers)-1].Neurons // Exported field names
 	output := make([]float32, len(outputLayer))
 	for i, neuron := range outputLayer {
-		output[i] = neuron.output
+		output[i] = neuron.Output // Exported field name
 	}
 	return output
 }
@@ -611,27 +603,26 @@ func (nn *NeuralNetwork) Predict(data []float32) int {
 	return idx
 }
 
-func (nn *NeuralNetwork) calculateProps() []float64 { // Return []float64
-	outputLayer := nn.layers[len(nn.layers)-1].neurons
-	output := make([]float32, len(outputLayer))
-	for i, neuron := range outputLayer {
-		neuron.output = capValue(neuron.output)
-		output[i] = neuron.output
+// SoftmaxProbabilities calculates the softmax probabilities for the output layer.
+// Renamed from calculateProps for clarity. Returns []float32 for consistency.
+func (nn *NeuralNetwork) SoftmaxProbabilities() []float32 {
+	outputLayerNeurons := nn.Layers[len(nn.Layers)-1].Neurons // Exported field names
+	outputValues := make([]float32, len(outputLayerNeurons))
+	for i, neuron := range outputLayerNeurons {
+		neuron.Output = capValue(neuron.Output) // Ensure output is capped before softmax
+		outputValues[i] = neuron.Output         // Exported field name
 	}
-	softmax := softmax(output, nn.params)
-	softmaxFloat64 := make([]float64, len(softmax))
-	for i, v := range softmax {
-		v = capValue(v)
-		softmaxFloat64[i] = float64(v)
-	}
-	return softmaxFloat64 // Return the slice directly
+	// Apply softmax to the final layer's outputs to get probabilities.
+	softmaxProbs := softmax(outputValues, nn.Params) // Exported field name
+	// No need to convert to float64 here, return float32 directly.
+	return softmaxProbs
 }
 
 // calculateLoss computes the cross-entropy loss for a single sample, including L2 regularization.
 // Cross-Entropy Loss: - Sum_i (target_i * log(predicted_probability_i))
 // L2 Regularization Term: (lambda / 2) * Sum_all_weights (weight^2)
-func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is now []float32
-	propsData := nn.calculateProps() // Get predicted probabilities (float64)
+func (nn *NeuralNetwork) calculateLoss(target []float32) float32 {
+	softmaxProbs := nn.SoftmaxProbabilities() // Returns []float32
 	var loss float32 = 0.0
 
 	// Calculate Cross-Entropy part
@@ -716,7 +707,7 @@ func softmax(output []float32, params Params) []float32 {
 	// Use the numerically stable softmax calculation.
 	stableOutput := stableSoftmax(output)
 
-	// Apply capValue to the results. With default params (lowCap=0),
+	// Apply capValue to the results.
 	// this primarily handles any residual NaNs by converting them to 0.
 	// If lowCap were non-zero, it would enforce min/max probability magnitudes.
 	for i, v := range stableOutput {
