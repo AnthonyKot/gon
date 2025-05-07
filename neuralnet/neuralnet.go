@@ -81,7 +81,7 @@ func defaultParams() *Params {
         return &Params{
             lr:      0.01,
             decay:   0.95, // Reduced decay rate
-            L2:      0,
+            L2:      1e-4, // Enabled L2 regularization
             lowCap:  0,
             relu:    0,
             jacobian:false,
