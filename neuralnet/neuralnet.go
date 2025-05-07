@@ -348,7 +348,7 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
 
 func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
         for e := 0; e < epochs; e++ {
-                nn.params.lr = nn.params.lr * nn.params.decay
+                // learning rate decay moved to end of epoch
                 var loss float32 = 0.0
                 // Prepare error vectors for backpropagation
                 errors := make([]mat.VecDense, len(trainingData))
@@ -363,6 +363,7 @@ func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs
                 }
                 nn.Backpropagate(errors)
                 fmt.Println(fmt.Sprintf("Loss Batch %d = %.2f", e, loss / float32(len(trainingData))))
+                nn.params.lr = nn.params.lr * nn.params.decay
         }
 }
 
