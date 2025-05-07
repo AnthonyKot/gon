@@ -731,29 +731,15 @@ func xavierInit(numInputs int, numOutputs int, params Params) float32 {
 
 func capValue(value float32) float32 {
 	if math.IsNaN(float64(value)) {
-		return 0.0 // Directly return 0 for NaN, as lowCap was always 0
+		return 0.0
 	}
-	if math.IsInf(float64(value), 1) { // +Inf
+	if math.IsInf(float64(value), 1) {
 		return DefaultMaxAbsValue
 	}
-	if math.IsInf(float64(value), -1) { // -Inf
+	if math.IsInf(float64(value), -1) {
 		return -DefaultMaxAbsValue
 	}
-
-	// If lowCap is 0, no further capping for finite values beyond NaN/Inf.
-	if params.lowCap == 0 {
-		// Optional: could cap 'value' against DefaultMaxAbsValue here too for extreme finite values
-		// if abs(value) > DefaultMaxAbsValue, but current logic defers this to lowCap != 0 case.
-		// Since lowCap is always 0 in defaultParams and not configurable via flags,
-		// the logic below for non-zero lowCap is currently dead code.
-		// If lowCap were configurable, this logic would apply min/max magnitudes.
-		return value
-	}
-
-	// // Dead code path removed:
-	// // This part executes if params.lowCap != 0 (and value is finite).
-	// // ... (logic for minMagnitude, effectiveUpperCap, capping) ...
-	// return sign * cappedAbsVal
+	return value
 }
 
 // selectSamples function removed as unused.
