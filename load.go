@@ -418,9 +418,10 @@ var (
     flagL2      = flag.Float64("l2", 1e-4, "L2 regularization factor")
     flagEpochs  = flag.Int("epochs", NumEpochs, "number of epochs")
     flagBatch   = flag.Int("batch", MiniBatchSize, "mini-batch size")
-    flagWorkers   = flag.Int("workers", runtime.NumCPU(), "number of workers")
-    flagSaveModel = flag.String("save", "", "path to save best model during training")
-    flagLoadModel = flag.String("load", "", "path to load saved (best) model for evaluation")
+    flagWorkers    = flag.Int("workers", runtime.NumCPU(), "number of workers")
+    flagMomentum   = flag.Float64("momentum", 0.9, "momentum coefficient")
+    flagSaveModel  = flag.String("save", "", "path to save best model during training")
+    flagLoadModel  = flag.String("load", "", "path to load saved (best) model for evaluation")
 )
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
