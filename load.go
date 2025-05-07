@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"gon/neuralnet"
+	"path/filepath" // Added for joining paths
 	"gonum.org/v1/gonum/mat"
 )
 
 const (
-	LabelSize = 1
-	Colors    = 3
+	TempDirName = "temp" // Directory to save images
+	LabelSize   = 1
+	Colors      = 3
 	D         = 32
 	Batch     = 10000
 	Channel   = D * D
@@ -111,8 +113,21 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, pr
 			trueIdx = k
 		}
 	}
-	label := fmt.Sprintf("file_%s_%d_%s.png", ws[trueIdx], sampleIdx, ws[predIdx])
-	file, err := os.Create(label)
+
+	// Ensure the temp directory exists
+	err := os.MkdirAll(TempDirName, 0755) // 0755 are standard permissions
+	if err != nil {
+		fmt.Printf("Error creating directory %s: %v\n", TempDirName, err)
+		// Decide if we should panic or just try saving in the current dir
+		// For now, let's panic as saving might fail anyway.
+		panic(err)
+	}
+
+	// Construct the full path including the directory
+	baseFilename := fmt.Sprintf("file_%s_%d_%s.png", ws[trueIdx], sampleIdx, ws[predIdx])
+	fullPath := filepath.Join(TempDirName, baseFilename)
+
+	file, err := os.Create(fullPath)
 	defer file.Close()
 	if err != nil {
 		panic(err)
@@ -123,7 +138,7 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, pr
 		panic(err)
 	}
 
-	println(fmt.Sprintf("Image saved as %s", label))
+	println(fmt.Sprintf("Image saved as %s", fullPath))
 }
 
 func oneHotEncode(labels []int, numClasses int) []mat.VecDense {
