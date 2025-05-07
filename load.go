@@ -309,7 +309,8 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOut
 	return float32(correctPredictions) / float32(numSamplesToTest)
 }
 
-func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOutputs [][]float32, from int, to int, numWorkers int, descr []string) {
+// Calculates and prints per-class accuracy for a given slice range (e.g., validation set)
+func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, allInputs [][]float32, allLabels [][]float32, from int, to int, numWorkers int, descr []string) {
 	numSamplesToTest := to - from
 	if numSamplesToTest <= 0 {
 		fmt.Println("No samples in validation set to calculate per-class accuracy.")
@@ -322,8 +323,8 @@ func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, trainingData
 	if numWorkers <= 1 || numSamplesToTest < numWorkers { // Fallback to single-threaded
 		for i := from; i < to; i++ {
 			currentNN := nn.Clone() // Use clone for consistency
-			trueLabelIdx := label(expectedOutputs[i])
-			predLabelIdx := currentNN.Predict(trainingData[i])
+			trueLabelIdx := label(allLabels[i])
+			predLabelIdx := currentNN.Predict(allInputs[i])
 
 			if trueLabelIdx >= 0 && trueLabelIdx < NumClasses {
 				classTotalCounts[trueLabelIdx]++
@@ -365,8 +366,8 @@ func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, trainingData
 				localClassTotal := make([]int, NumClasses)
 
 				for i := startIdx; i < endIdx; i++ {
-					trueLabelIdx := label(expectedOutputs[i])
-					predLabelIdx := workerNN.Predict(trainingData[i])
+					trueLabelIdx := label(allLabels[i])
+					predLabelIdx := workerNN.Predict(allInputs[i])
 
 					if trueLabelIdx >= 0 && trueLabelIdx < NumClasses {
 						localClassTotal[trueLabelIdx]++
