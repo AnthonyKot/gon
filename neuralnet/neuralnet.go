@@ -117,6 +117,7 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 	nn := &NeuralNetwork{
 		layers: make([]*Layer, numHiddenLayers+1),
 		params: params,
+		input:  make([]float32, inputSize), // Preallocate input slice for FeedForward
 	}
 
 	// prevLayerNeuronCount tracks the number of neurons in the layer that feeds into the current one.
@@ -178,9 +179,7 @@ func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunc
 func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 	// Convert input mat.VecDense to []float32 once and store in nn.input.
 	// Reuse nn.input slice if possible to reduce allocations.
-	if nn.input == nil || len(nn.input) != input.Len() {
-		nn.input = make([]float32, input.Len())
-	}
+	// nn.input is preallocated in initialise; no need to allocate here
 	for j := 0; j < input.Len(); j++ {
 		nn.input[j] = float32(input.AtVec(j))
 	}
