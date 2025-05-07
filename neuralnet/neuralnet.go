@@ -174,19 +174,25 @@ func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunc
 }
 
 func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
-	saveInput := make([]float32, input.Len())
-	// the first layer takes inputs as X
+	// Convert input mat.VecDense to []float32 once and store in nn.input.
+	// Reuse nn.input slice if possible to reduce allocations.
+	if nn.input == nil || len(nn.input) != input.Len() {
+		nn.input = make([]float32, input.Len())
+	}
+	for j := 0; j < input.Len(); j++ {
+		nn.input[j] = float32(input.AtVec(j))
+	}
+
+	// The first layer takes inputs as X from nn.input
 	for _, neuron := range nn.layers[0].neurons {
 		neuron.output = neuron.bias
-		for j := 0; j < input.Len(); j++ {
-			currentInput := float32(input.AtVec(j))
-			saveInput[j] = currentInput
-			neuron.output += currentInput * neuron.weights[j]
+		for j := 0; j < len(nn.input); j++ { // Iterate over nn.input
+			neuron.output += nn.input[j] * neuron.weights[j] // Use nn.input directly
 		}
 		neuron.output = nn.layers[0].activation.Activate(neuron.output)
 		neuron.output = capValue(neuron.output, nn.params)
 	}
-	nn.input = saveInput
+	// nn.input is already set.
 	for i := 1; i < len(nn.layers); i++ {
 		for _, neuron := range nn.layers[i].neurons {
 			neuron.output = neuron.bias
