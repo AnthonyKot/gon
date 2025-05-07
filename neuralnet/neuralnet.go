@@ -12,6 +12,9 @@ import (
         "os"
 )
 
+// DefaultMaxAbsValue defines a large finite number to cap extreme values, preventing Inf propagation.
+const DefaultMaxAbsValue = float32(1e10)
+
 const MAX_WORKERS int = 8
 
 type Neuron struct {
@@ -221,10 +224,12 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
                         delta := layer.deltas[nIdx]
                         for wIdx := range neuron.weights {
                                 grad := delta * prevOutputs[wIdx]
+                                // Add L2 regularization gradient component
+                                grad += nn.params.L2 * neuron.weights[wIdx]
+                                
                                 neuron.momentum[wIdx] = 0.9*neuron.momentum[wIdx] + learningRate*grad
                                 neuron.weights[wIdx] -= neuron.momentum[wIdx]
-                                // regularization term
-                                neuron.weights[wIdx] -= nn.params.L2 * neuron.weights[wIdx]
+                                // capValue is applied to weights after update
                                 neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
                         }
                         // Update bias
@@ -557,24 +562,57 @@ func convertDeltasToDense(layer *Layer, params Params) *mat.VecDense {
         return dense
 }
 
+// stableSoftmax computes softmax in a numerically stable way.
+func stableSoftmax(output []float32) []float32 {
+    if len(output) == 0 {
+        return []float32{}
+    }
+    // Subtract max for numerical stability
+    maxVal := output[0]
+    for _, v := range output[1:] {
+        if v > maxVal {
+            maxVal = v
+        }
+    }
+
+    exps := make([]float32, len(output))
+    var sumExps float32 = 0.0
+    for i, v := range output {
+        exps[i] = float32(math.Exp(float64(v - maxVal)))
+        sumExps += exps[i]
+    }
+
+    // Handle case where sumExps is zero (e.g., all inputs were very small, leading to exp(v-max) -> 0)
+    // or if sumExps becomes Inf (less likely with max subtraction but theoretically possible with extreme inputs)
+    if sumExps == 0 || math.IsInf(float64(sumExps), 0) {
+        // Fallback: distribute probability uniformly.
+        // This prevents division by zero or NaN results (e.g. 0/0 or Inf/Inf).
+        // This situation indicates that the network outputs are either all extremely small or problematic.
+        uniformProb := 1.0 / float32(len(exps))
+        for i := range exps {
+            exps[i] = uniformProb
+        }
+        return exps
+    }
+
+    for i := range exps {
+        exps[i] /= sumExps
+    }
+    return exps
+}
+
 func softmax(output []float32, params Params) []float32 {
-        expValues := make([]float32, len(output))
+    // Use the numerically stable softmax calculation.
+    stableOutput := stableSoftmax(output)
 
-        for i, value := range output {
-            expValues[i] = capValue(float32(math.Exp(float64(value))), params)
-        }
-
-        var sum float32 = 0.0
-        for i := range expValues {
-                sum += expValues[i]
-        }
-
-        for i := range expValues {
-            expValues[i] /= sum
-        }
-    
-        return expValues
- }
+    // Apply capValue to the results. With default params (lowCap=0),
+    // this primarily handles any residual NaNs by converting them to 0.
+    // If lowCap is non-zero, it will enforce min/max probability magnitudes.
+    for i, v := range stableOutput {
+        stableOutput[i] = capValue(v, params)
+    }
+    return stableOutput
+}
 
 func xavierInit(numInputs int, numOutputs int, params Params) float32 {
         limit := math.Sqrt(6.0 / float64(numInputs + numOutputs))
@@ -583,28 +621,58 @@ func xavierInit(numInputs int, numOutputs int, params Params) float32 {
 }
 
 func capValue(value float32, params Params) float32 {
-        // Check for NaN and return a small value instead
-        if math.IsNaN(float64(value)) {
-                return params.lowCap
+    if math.IsNaN(float64(value)) {
+        return params.lowCap 
+    }
+    if math.IsInf(float64(value), 1) { // +Inf
+        return DefaultMaxAbsValue
+    }
+    if math.IsInf(float64(value), -1) { // -Inf
+        return -DefaultMaxAbsValue
+    }
+    
+    // If lowCap is 0, no further capping for finite values beyond NaN/Inf.
+    if params.lowCap == 0 {
+        // Optional: could cap 'value' against DefaultMaxAbsValue here too for extreme finite values
+        // if abs(value) > DefaultMaxAbsValue, but current logic defers this to lowCap != 0 case.
+        return value
+    }
+
+    // This part executes if params.lowCap != 0 (and value is finite).
+    // params.lowCap is assumed to be the minimum desired absolute magnitude.
+    // Ensure minMagnitude is non-negative.
+    minMagnitude := params.lowCap
+    if params.lowCap < 0 { // If lowCap is negative (unusual), treat min magnitude as 0.
+        minMagnitude = 0 
+    }
+    
+    // Determine the effective upper cap for magnitude.
+    effectiveUpperCap := DefaultMaxAbsValue
+    if params.lowCap > 0 { // Ensure lowCap is positive before division for 1/lowCap.
+        calculatedUpperCap := 1.0 / params.lowCap
+        // Use calculatedUpperCap if it's smaller than DefaultMaxAbsValue and positive.
+        if calculatedUpperCap < effectiveUpperCap && calculatedUpperCap > 0 {
+            effectiveUpperCap = calculatedUpperCap
         }
-        
-        if math.IsInf(float64(value), 0) {
-                if value > 0 {
-                        return 1.0 / params.lowCap // Return a large positive value
-                } else {
-                        return -1.0 / params.lowCap // Return a large negative value
-                }
-        }
-        
-        if (params.lowCap == 0) {
-                return value
-        }
-        
-        if value >= 0 {
-                return float32(math.Min(math.Max(float64(value), float64(params.lowCap)), float64(1/params.lowCap)))
-        }
-        
-        return -capValue(-value, params)
+    }
+    
+    // Use absolute value for capping logic, then restore sign.
+    absVal := value
+    sign := float32(1.0)
+    if value < 0 {
+        absVal = -value
+        sign = -1.0
+    }
+
+    cappedAbsVal := absVal
+    if cappedAbsVal < minMagnitude { // Apply minimum magnitude
+        cappedAbsVal = minMagnitude
+    }
+    if cappedAbsVal > effectiveUpperCap { // Apply maximum magnitude
+        cappedAbsVal = effectiveUpperCap
+    }
+    
+    return sign * cappedAbsVal
 }
 
 func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, samples int) ([]mat.VecDense, []mat.VecDense) {
