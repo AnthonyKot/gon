@@ -47,6 +47,7 @@ type Params struct {
         relu     float32
         jacobian bool
         bn float32
+        MomentumCoefficient float32
 }
 
 type Task struct {
@@ -62,18 +63,21 @@ func CreateTask(data mat.VecDense, output mat.VecDense) Task {
 }
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
-        return NewParamsFull(learningRate, decay, regularization, cap, defaultParams().relu, defaultParams().jacobian)
+        // Calls NewParamsFull, providing default values for relu, jacobian, momentum, and bn
+        defaults := defaultParams()
+        return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.jacobian, defaults.MomentumCoefficient, defaults.bn)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, jacobian bool) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, jacobian bool, momentumCoefficient float32, bn float32) Params {
         return Params{
-                lr:      learningRate,
-                decay:   decay,
-                L2:      regularization,
-                lowCap:  cap,
-                relu:    relu,
-                jacobian: jacobian,
-                bn: 0.0,
+                lr:                 learningRate,
+                decay:              decay,
+                L2:                 regularization,
+                lowCap:             cap,
+                relu:               relu,
+                jacobian:           jacobian,
+                bn:                 bn,
+                MomentumCoefficient: momentumCoefficient,
             }
 }
 
@@ -86,6 +90,7 @@ func defaultParams() *Params {
             relu:    0,
             jacobian:false,
             bn: 0.0,
+            MomentumCoefficient: 0.9, // Default momentum coefficient
         }
 }
 
@@ -214,7 +219,7 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
                     // Add L2 regularization gradient component
                     avgGrad += nn.params.L2 * neuron.weights[wIdx]
                         
-                    neuron.momentum[wIdx] = 0.9*neuron.momentum[wIdx] + learningRate*avgGrad
+                    neuron.momentum[wIdx] = nn.params.MomentumCoefficient*neuron.momentum[wIdx] + learningRate*avgGrad
                     neuron.weights[wIdx] -= neuron.momentum[wIdx]
                     neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
                 }
