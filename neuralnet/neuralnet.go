@@ -94,6 +94,13 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
 func initialise(inputSize int, hidden []int, outputSize int, params Params) *NeuralNetwork {
         rand.Seed(time.Now().UnixNano())
 
+        if len(hidden) == 0 {
+                // The current code structure relies on hidden[0] existing for the first layer's size
+                // and subsequent loop iterations. If hidden can be empty, this needs specific handling
+                // (e.g., a network with no hidden layers, or a different loop structure).
+                panic("initialise: hidden layers slice cannot be empty as hidden[0] is accessed")
+        }
+
         nn := &NeuralNetwork{
                 // input + hidden + output
                 layers: make([]*Layer, len(hidden) + 2),
