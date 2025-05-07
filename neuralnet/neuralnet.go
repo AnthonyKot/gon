@@ -39,8 +39,6 @@ type NeuralNetwork struct {
 	input                   []float32
 	params                  Params
 	prevLayerOutputsBuffer []float32 // Buffer for backpropagation
-	// optimizer               Optimizer   // Removed: Unused
-	// lossFunction            LossFunction // Removed: Unused
 }
 
 type Params struct {
@@ -51,7 +49,6 @@ type Params struct {
 	MomentumCoefficient float32
 }
 
-// Task struct and CreateTask function removed as unused.
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
 	// Calls NewParamsFull, providing default values for momentum
@@ -169,7 +166,6 @@ func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params 
 	return initialise(inputSize, hiddenConfig, outputSize, params)
 }
 
-// SetActivation function removed as unused.
 
 func (nn *NeuralNetwork) FeedForward(input []float32) {
 	// Input is now []float32. Copy it to nn.input if necessary.
@@ -666,9 +662,6 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is 
 	return loss
 }
 
-// convertWeightsToDense removed as unused.
-
-// convertBiasesToVecDense removed as unused.
 
 
 // stableSoftmax computes softmax in a numerically stable way.
@@ -742,7 +735,6 @@ func capValue(value float32) float32 {
 	return value
 }
 
-// selectSamples function removed as unused.
 
 func (nn *NeuralNetwork) Save(filename string) {
 	file, err := os.Create(filename)
