@@ -33,7 +33,7 @@ type Layer struct {
 	activation ActivationFunction
 }
 
-// Represents of the simlest NN.
+// Represents the simplest NN.
 type NeuralNetwork struct {
 	layers                  []*Layer
 	input                   []float32
@@ -131,6 +131,7 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 				bias:     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params),
 				momentum: make([]float32, prevLayerNeuronCount),
 			}
+			// TODO: use gauss to init weights - This comment is outdated, Xavier is used.
 			for k := range hiddenLayer.neurons[j].weights {
 				hiddenLayer.neurons[j].weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params)
 			}
@@ -152,6 +153,7 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 			bias:     xavierInit(prevLayerNeuronCount, outputSize, nn.params),
 			momentum: make([]float32, prevLayerNeuronCount),
 		}
+		// TODO: use gauss to init weights - This comment is outdated, Xavier is used.
 		for k := range outputLayer.neurons[l].weights {
 			outputLayer.neurons[l].weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.params)
 		}
@@ -238,44 +240,7 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 // The old UpdateWeights function is now replaced by applyAveragedGradients
 // and the gradient accumulation logic within backpropagateAndAccumulateForSample.
 
-// TrainSGD is updated to use the new gradient accumulation and application mechanism.
-// For SGD, the "batch size" is 1 for gradient application.
-func (nn *NeuralNetwork) TrainSGD(trainingData [][]float32, expectedOutputs [][]float32, epochs int) {
-	numSamples := len(trainingData)
-	if numSamples == 0 {
-		fmt.Println("TrainSGD: No training data provided.")
-		return
-	}
-
-	for e := 0; e < epochs; e++ {
-		var totalEpochLoss float32 = 0.0
-		permutation := rand.Perm(numSamples) // Shuffle data for each epoch
-
-		for _, idx := range permutation { // Iterate through shuffled samples
-			dataSample := trainingData[idx]
-			labelSample := expectedOutputs[idx]
-
-			// For SGD, gradients are calculated and applied for each sample individually.
-			nn.zeroAccumulatedGradients() // Zero out before processing the single sample
-
-			sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
-			totalEpochLoss += sampleLoss
-
-			// Apply gradients for this single sample (effective batchSize=1)
-			nn.applyAveragedGradients(1, nn.params.lr)
-		}
-
-		// Apply learning rate decay once per epoch
-		nn.params.lr *= nn.params.decay
-
-		if numSamples > 0 {
-			averageLoss := totalEpochLoss / float32(numSamples)
-			fmt.Printf("Loss SGD %d = %.2f\n", e, averageLoss)
-		} else {
-			fmt.Printf("Loss SGD %d = 0.00 (No samples processed)\n", e)
-		}
-	}
-}
+// TrainSGD function removed as unused in the current main application flow.
 
 // Clone creates a deep copy of a neural network for thread-safe parallel processing.
 func (nn *NeuralNetwork) Clone() *NeuralNetwork {
