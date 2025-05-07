@@ -48,7 +48,6 @@ func (s Sigmoid) Activate(x float32) float32 {
 	return 1 / (1 + float32(math.Exp(-float64(x))))
 }
 
-
 func (s Sigmoid) Derivative(x float32) float32 {
 	sigmoid := s.Activate(x)
 	return sigmoid * (1 - sigmoid)
@@ -62,7 +61,7 @@ func (t Tanh) Activate(x float32) float32 {
 
 func (t Tanh) Derivative(x float32) float32 {
 	tanh := t.Activate(x)
-	return 1 - tanh * tanh
+	return 1 - tanh*tanh
 }
 
 type Linear struct{}
