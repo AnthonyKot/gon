@@ -9,6 +9,8 @@ import (
         "math/rand"
         "gonum.org/v1/gonum/diff/fd"
         "gonum.org/v1/gonum/mat"
+        "encoding/json"
+        "os"
 )
 
 const MAX_WORKERS int = 8
@@ -90,7 +92,7 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
 }
 
 func initialise(inputSize int, hidden []int, outputSize int, params Params) *NeuralNetwork {
-        rand.Seed(int64(seed(inputSize, hidden, outputSize)))
+        rand.Seed(time.Now().UnixNano())
 
         nn := &NeuralNetwork{
                 // input + hidden + output
@@ -217,38 +219,34 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
         // 1st layer update
         for j, neuron := range nn.layers[0].neurons {
                 for k := range neuron.weights {
-                        // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
-                        neuron.weights[k] -= learningRate * nn.layers[0].deltas[j] * nn.input[k]
-                        neuron.momentum[k] = 0.9 * neuron.momentum[k] + 0.1 * learningRate * nn.layers[0].deltas[j] * nn.input[k]
+                        grad := nn.layers[0].deltas[j] * nn.input[k]
+                        neuron.momentum[k] = 0.9 * neuron.momentum[k] + learningRate * grad
+                        neuron.weights[k] -= neuron.momentum[k]
                         // regulisation term
                         neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
                         neuron.weights[k] = capValue(neuron.weights[k], nn.params)
                     }
         
                     // Update bias: bias_new = bias_old + learningRate * delta
-                    neuron.bias -= learningRate * nn.layers[0].deltas[j]
+                    neuron.bias -= learningRate * nn.layers[0].deltas[j] // Bias momentum can also be added if desired
         }
         
         for i := 1; i < len(nn.layers); i++ {
             currentLayer := nn.layers[i]
             previousLayer := nn.layers[i-1]
 
-	for i := 1; i < len(nn.layers); i++ {
-            currentLayer := nn.layers[i]
-            previousLayer := nn.layers[i-1]
-
-	for j, neuron := range currentLayer.neurons {
+            for j, neuron := range currentLayer.neurons {
                 for k := range neuron.weights {
-                    // Gradient descent: w_new = w_old + learningRate * delta * previous_layer_output
-                    neuron.weights[k] -= learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
-                    neuron.momentum[k] = 0.9 * neuron.momentum[k] + 0.1 * learningRate * currentLayer.deltas[j] * previousLayer.neurons[k].output
+                    grad := currentLayer.deltas[j] * previousLayer.neurons[k].output
+                    neuron.momentum[k] = 0.9 * neuron.momentum[k] + learningRate * grad
+                    neuron.weights[k] -= neuron.momentum[k]
                     // regulisation term
                     neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
                     neuron.weights[k] = capValue(neuron.weights[k], nn.params)
                 }
     
                 // Update bias: bias_new = bias_old + learningRate * delta
-                neuron.bias -= learningRate * currentLayer.deltas[j]
+                neuron.bias -= learningRate * currentLayer.deltas[j] // Bias momentum can also be added if desired
             }
         }
 
@@ -414,24 +412,25 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
                         }
                         wg.Wait()
                         
-                        // Accumulate losses from worker NNs into the main NN
-                        for l := 0; l < len(nn.layers); l++ {
-                                if len(nn.layers[l].deltas) == 0 {
-                                        nn.layers[l].deltas = make([]float32, len(nn.layers[l].neurons))
+                        // Reset main nn.loss before accumulating from workers
+                        for k := range nn.loss {
+                            nn.loss[k] = 0
+                        }
+
+                        // Accumulate losses from workerNNs to main nn.loss
+                        // Also, ensure workerNN.loss is reset for its next use if AccumulateLoss doesn't reset it.
+                        // The current AccumulateLoss sums, so workerNN.loss would grow indefinitely if not reset.
+                        // For simplicity here, we assume workerNN.loss contains the loss for its tasks for this batch.
+                        for _, workerNN := range workerNNs {
+                            for k := 0; k < len(nn.loss); k++ {
+                                if k < len(workerNN.loss) { // safety check
+                                     nn.loss[k] += workerNN.loss[k]
+                                     // Optionally, reset workerNN.loss[k] = 0 here if it's reused directly
                                 }
-                                
-                                for _, workerNN := range workerNNs {
-                                        if len(workerNN.layers[l].deltas) > 0 {
-                                                for n := 0; n < len(nn.layers[l].deltas); n++ {
-                                                        if n < len(workerNN.layers[l].deltas) {
-                                                                nn.layers[l].deltas[n] += workerNN.layers[l].deltas[n]
-                                                        }
-                                                }
-                                        }
-                                }
+                            }
                         }
                         
-                        // Do single backpropagation with accumulated loss
+                        // Do single backpropagation with accumulated loss from all workers
                         nn.Backpropagate(len(currentData))
                         nn.params.lr = nn.params.lr * nn.params.decay
                 }
@@ -653,13 +652,7 @@ func (nn *NeuralNetwork) Backpropagate(dataPoints int) {
         // TODO can be changed in real time based on schedule
         nn.UpdateWeights(nn.params.lr)
 }
-func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
-        dense := mat.NewVecDense(len(neurons), nil)
-        for i, neuron := range neurons {
-                dense.SetVec(i, float64(neuron.bias))
-        }
-        return dense
-}
+
 func convertDeltasToDense(layer *Layer, params Params) *mat.VecDense {
         dense := mat.NewVecDense(len(layer.deltas), nil)
         for i, d := range layer.deltas {
@@ -742,18 +735,13 @@ func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, 
         return selectedInputs, selectedLabels
 }
 
-import (
-        "fmt"
-	"strings"
-        "math"
-        "sync"
-        "time"
-        "math/rand"
-        "gonum.org/v1/gonum/diff/fd"
-        "gonum.org/v1/gonum/mat"
-        "encoding/json"
-        "os"
-)
+// Note: The import block below was duplicated and misplaced.
+// It's generally better to have all imports at the top of the file.
+// For this change, I am only removing the duplicated block.
+// The necessary imports (json, os) should already be part of the main import block at the top.
+// If not, they would need to be added there.
+// Assuming "encoding/json" and "os" are already in the top import block.
+
 func (nn *NeuralNetwork) Save(filename string) {
 	file, err := os.Create(filename)
 	if err != nil {

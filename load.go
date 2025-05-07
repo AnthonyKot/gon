@@ -193,7 +193,8 @@ func flaten(image mat.Dense) mat.VecDense {
 func converImagesToInputs(images [][]mat.Dense) []mat.VecDense {
 	inputs := make([]mat.VecDense, len(images))
 	for i := 0; i < len(inputs); i++ {
-		inputs[i] = flaten(images[i][0])
+		bwImage := RGBToBlackWhite(images[i]) // Convert to BW first
+		inputs[i] = flaten(bwImage)           // Then flatten
 	}
 	return inputs
 }
