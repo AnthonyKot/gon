@@ -435,7 +435,6 @@ func main() {
 	// if numWorkers > neuralnet.MAX_WORKERS {
 	// 	numWorkers = neuralnet.MAX_WORKERS
 	// }
-	}
 	// Fetch default parameter values to use as base for both sessions
 	// We need a way to get these defaults. Let's assume neuralnet.DefaultParams() exists
 	// or we hardcode them based on current defaults if a public getter isn't available.
