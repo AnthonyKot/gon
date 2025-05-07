@@ -310,7 +310,7 @@ func runTrainingSession(
 	from int,
 	to int,
 	epochs int,
-	trainToValidationRatio int,
+	// trainToValidationRatio int, // Removed parameter
 	miniBatchSize int,
 	baseNumWorkers int,
 	initialLR float32,
