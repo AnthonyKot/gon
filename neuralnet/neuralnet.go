@@ -190,13 +190,34 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 		neuron.output = capValue(neuron.output, nn.params)
 	}
 	// nn.input is already set.
+
+	// Process hidden and output layers (i >= 1)
 	for i := 1; i < len(nn.layers); i++ {
-		for _, neuron := range nn.layers[i].neurons {
-			neuron.output = neuron.bias
-			for j := 0; j < len(nn.layers[i-1].neurons); j++ {
-				neuron.output += nn.layers[i-1].neurons[j].output * neuron.weights[j]
-			}
-			neuron.output = nn.layers[i].activation.Activate(neuron.output) // Removed UseFloat64 flag
+		currentLayer := nn.layers[i]
+		prevLayer := nn.layers[i-1]
+
+		// 1. Get previous layer's activations (A)
+		prevLayerOutputData := make([]float64, len(prevLayer.neurons))
+		for k, prevNeuron := range prevLayer.neurons {
+			prevLayerOutputData[k] = float64(prevNeuron.output)
+		}
+		prevLayerActivations := mat.NewVecDense(len(prevLayer.neurons), prevLayerOutputData)
+
+		// 2. Construct current layer's weight matrix (W) and bias vector (B)
+		//    NOTE: This construction adds overhead in each FeedForward pass.
+		weightsMatrix := convertWeightsToDense(currentLayer)
+		biasVector := convertBiasesToVecDense(currentLayer)
+
+		// 3. Calculate Z = W * A + B
+		preActivationOutputs := mat.NewVecDense(len(currentLayer.neurons), nil)
+		preActivationOutputs.MulVec(weightsMatrix, prevLayerActivations) // Z_intermediate = W * A
+		preActivationOutputs.AddVec(preActivationOutputs, biasVector)    // Z = Z_intermediate + B
+
+		// 4. Apply activation and store results in neuron.output
+		preActivationData := preActivationOutputs.RawVector().Data
+		for k, neuron := range currentLayer.neurons {
+			neuron.output = float32(preActivationData[k]) // Store pre-activation temporarily if needed, or directly activate
+			neuron.output = currentLayer.activation.Activate(neuron.output)
 			neuron.output = capValue(neuron.output, nn.params)
 		}
 	}
