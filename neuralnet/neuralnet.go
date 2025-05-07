@@ -251,22 +251,30 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
         }
 
 func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
-        batchSize := 1
+        batchSize := 1 // Standard SGD processes one sample at a time
         for e := 0; e < epochs; e++ {
-                nn.params.lr = nn.params.lr * nn.params.decay / 100
-                var loss float32 = 0.0
-                for b := 0; b < len(trainingData); b++ {
-                        data, labels := selectSamples(trainingData, expectedOutputs, batchSize)
-                        // SGD. Train on 1 random example
-                        for i := 0; i < batchSize; i++ {
-                                nn.FeedForward(data[i])
-                                nn.AccumulateLoss(labels[i])
-                                loss += nn.calculateLoss(labels[i])
-                                nn.Backpropagate(1)
-                        }
+                var totalEpochLoss float32 = 0.0
+                // Create a permutation of indices to shuffle the training data for each epoch
+                permutation := rand.Perm(len(trainingData))
+
+                for _, idx := range permutation {
+                        dataSample := trainingData[idx]
+                        labelSample := expectedOutputs[idx]
+                        
+                        nn.FeedForward(dataSample)
+                        nn.AccumulateLoss(labelSample) // Accumulates loss for backprop
+                        totalEpochLoss += nn.calculateLoss(labelSample) // Sums individual sample losses for reporting
+                        nn.Backpropagate(1) // Backpropagate and update weights for this single sample
                 }
-                nn.params.lr = nn.params.lr * 100
-                fmt.Println(fmt.Sprintf("Loss SGD %d = %.2f", e, loss))
+                
+                // Apply learning rate decay once per epoch
+                nn.params.lr *= nn.params.decay 
+                
+                if len(trainingData) > 0 {
+                    fmt.Println(fmt.Sprintf("Loss SGD %d = %.2f", e, totalEpochLoss / float32(len(trainingData))))
+                } else {
+                    fmt.Println(fmt.Sprintf("Loss SGD %d = %.2f (No training data)", e, 0.0))
+                }
         }
 }
 
@@ -343,7 +351,14 @@ func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, exp
                         for w := 0; w < MAX_WORKERS; w++ {
                                 min := (w * size / MAX_WORKERS)
                                 max := ((w + 1) * size) / MAX_WORKERS
-                                perWorker = append(perWorker, tasks[min:max])
+                                if min < size && max <= size && min < max { // Ensure slice indices are valid
+                                        perWorker = append(perWorker, tasks[min:max])
+                                } else if min < size && max > size && min < max { // Handle last worker potentially getting a smaller slice
+                                        perWorker = append(perWorker, tasks[min:size])
+                                }
+                        }
+                        if len(perWorker) == 0 && size > 0 { // Fallback if no workers got tasks but tasks exist (e.g. size < MAX_WORKERS)
+                            perWorker = append(perWorker, tasks)
                         }
                         for _, task := range(perWorker) {
                                 wg.Add(1)
