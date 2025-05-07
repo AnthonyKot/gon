@@ -26,11 +26,16 @@ const (
 	TrainSplitRatio  = 0.8    // Proportion of data used for training
 	LabelSize        = 1
 	Colors           = 3
-	D         = 32
-	Batch     = 10000
-	Channel   = D * D
-	ImageSize = Channel * Colors
-	Row       = LabelSize + ImageSize
+	D                = 32
+	Batch            = 10000
+	Channel          = D * D
+	ImageSize        = Channel * Colors
+	Row              = LabelSize + ImageSize
+	// Training configuration constants
+	NumClasses       = 10
+	NumEpochs        = 10
+	MiniBatchSize    = 64
+	NumSamplesToSave = 3
 )
 
 func loadCIFAR10(filePath string) ([][]mat.Dense, []int, error) {
@@ -223,6 +228,7 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 		panic("Error loading CIFAR-10")
 	}
 	out := oneHotEncode(labels, 10)
+	out := oneHotEncode(labels, NumClasses)
 	return images, out
 }
 
@@ -314,7 +320,6 @@ func runTrainingSession(
 	// initialRelu float32, // Removed
 	initialMomentum float32,
 	// initialBN float32, // Removed
-	// trainToValidationRatio int, // Removed parameter
 ) {
 	fmt.Printf("\n--- Starting Training Session (Calculations use float64 internally) ---\n")
 
@@ -330,7 +335,9 @@ func runTrainingSession(
 		// initialBN, // Removed
 	)
 
-	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, currentParams)
+	// Use NumClasses constant and derive input size
+	inputSize := D * D
+	nn := neuralnet.NewNeuralNetwork(inputSize, []int{512, 256}, NumClasses, currentParams)
 	// Ensure the optimizer is set if NewNeuralNetwork doesn't set a default one
 	// or if a specific one is desired. DefaultNeuralNetwork sets SGD.
 	// If NewNeuralNetwork is used directly, optimizer might need to be set manually:
@@ -352,7 +359,7 @@ func runTrainingSession(
 		// Switched to TrainMiniBatch, now with numWorkers
 		// The '1' for epochs in TrainMiniBatch means it processes the dataset once per outer loop iteration.
 		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
-		for sample := 0; sample < 3; sample++ {
+		for sample := 0; sample < NumSamplesToSave; sample++ {
 			// Select a random validation sample to predict and save
 			validationStart := to         // Validation starts after training data
 			validationEnd := len(inputs) // Validation ends at the end of the dataset
@@ -430,11 +437,11 @@ func main() {
 	// Calculate training set size based on ratio
 	trainingSetSize := int(float64(datasetSize) * TrainSplitRatio)
 	to := trainingSetSize // 'to' is the end index (exclusive) for training data
-	epochs := 10
+	epochs := NumEpochs
 	// train_to_validation := 4 // Removed
 
 	validationSetSize := datasetSize - trainingSetSize // Use remaining data for validation
-	miniBatchSize := 64 // Define mini-batch size
+	miniBatchSize := MiniBatchSize
 	fmt.Printf("Training set size: %d samples\n", trainingSetSize)
 	fmt.Printf("Validation set size: %d samples\n", validationSetSize)
 	fmt.Printf("Number of main epochs: %d\n", epochs)
@@ -466,7 +473,7 @@ func main() {
 	// Run a single training session (UseFloat64 flag is now removed)
 	runTrainingSession(
 		inputs, labels, imgs, descr,
-		from, to, epochs, /*train_to_validation,*/ miniBatchSize, baseNumWorkers,
+		from, to, epochs, miniBatchSize, baseNumWorkers,
 		initialLR, initialDecay, initialL2, initialLowCap, initialMomentum,
 	)
 
