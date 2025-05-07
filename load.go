@@ -309,6 +309,98 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOut
 	return float32(correctPredictions) / float32(numSamplesToTest)
 }
 
+func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOutputs [][]float32, from int, to int, numWorkers int, descr []string) {
+	numSamplesToTest := to - from
+	if numSamplesToTest <= 0 {
+		fmt.Println("No samples in validation set to calculate per-class accuracy.")
+		return
+	}
+
+	classCorrectCounts := make([]int, NumClasses)
+	classTotalCounts := make([]int, NumClasses)
+
+	if numWorkers <= 1 || numSamplesToTest < numWorkers { // Fallback to single-threaded
+		for i := from; i < to; i++ {
+			currentNN := nn.Clone() // Use clone for consistency
+			trueLabelIdx := label(expectedOutputs[i])
+			predLabelIdx := currentNN.Predict(trainingData[i])
+
+			if trueLabelIdx >= 0 && trueLabelIdx < NumClasses {
+				classTotalCounts[trueLabelIdx]++
+				if trueLabelIdx == predLabelIdx {
+					classCorrectCounts[trueLabelIdx]++
+				}
+			}
+		}
+	} else {
+		var wg sync.WaitGroup
+		mu := &sync.Mutex{} // Mutex to protect access to shared counts
+
+		samplesPerWorker := (numSamplesToTest + numWorkers - 1) / numWorkers // Ceiling division
+
+		for w := 0; w < numWorkers; w++ {
+			wg.Add(1)
+			workerStartOffset := w * samplesPerWorker
+			workerEndOffset := workerStartOffset + samplesPerWorker
+			if workerStartOffset >= numSamplesToTest {
+				wg.Done()
+				continue
+			}
+			if workerEndOffset > numSamplesToTest {
+				workerEndOffset = numSamplesToTest
+			}
+
+			actualWorkerStart := from + workerStartOffset
+			actualWorkerEnd := from + workerEndOffset
+
+			go func(startIdx int, endIdx int) {
+				defer wg.Done()
+				if startIdx >= endIdx {
+					return
+				}
+
+				workerNN := nn.Clone() // Each worker gets its own clone
+				// Local counts per worker to reduce mutex contention
+				localClassCorrect := make([]int, NumClasses)
+				localClassTotal := make([]int, NumClasses)
+
+				for i := startIdx; i < endIdx; i++ {
+					trueLabelIdx := label(expectedOutputs[i])
+					predLabelIdx := workerNN.Predict(trainingData[i])
+
+					if trueLabelIdx >= 0 && trueLabelIdx < NumClasses {
+						localClassTotal[trueLabelIdx]++
+						if trueLabelIdx == predLabelIdx {
+							localClassCorrect[trueLabelIdx]++
+						}
+					}
+				}
+				// Aggregate local counts into shared counts under mutex
+				mu.Lock()
+				for k := 0; k < NumClasses; k++ {
+					classCorrectCounts[k] += localClassCorrect[k]
+					classTotalCounts[k] += localClassTotal[k]
+				}
+				mu.Unlock()
+			}(actualWorkerStart, actualWorkerEnd)
+		}
+		wg.Wait()
+	}
+
+	fmt.Println("--- Per-Class Validation Accuracy ---")
+	for k := 0; k < NumClasses; k++ {
+		className := descr[k]
+		if classTotalCounts[k] > 0 {
+			acc := float32(classCorrectCounts[k]) / float32(classTotalCounts[k])
+			fmt.Printf("Accuracy of %8s : %.0f %%\n", className, acc*100)
+		} else {
+			fmt.Printf("Accuracy of %8s : N/A (0 samples)\n", className)
+		}
+	}
+	fmt.Println("------------------------------------")
+
+}
+
 var (
     flagLR      = flag.Float64("lr", 0.01, "learning rate")
     flagDecay   = flag.Float64("decay", 0.95, "learning rate decay")
@@ -404,6 +496,9 @@ func runTrainingSession(
 	fmt.Printf("Total training duration for session: %s\n", totalTrainingDuration)
 	fmt.Printf("Average epoch duration for session: %s\n", averageEpochDuration)
 	fmt.Println("---")
+
+	// Calculate and print per-class accuracy on the validation set
+	calculateAndPrintPerClassAccuracy(nn, inputs, labels, to, len(inputs), numWorkers, descr)
 }
 
 func main() {
