@@ -37,9 +37,10 @@ type Layer struct {
 
 // Represents of the simlest NN.
 type NeuralNetwork struct {
-	layers []*Layer
-	input  []float32
-	params Params
+	layers                  []*Layer
+	input                   []float32
+	params                  Params
+	prevLayerOutputsBuffer []float32 // Buffer for backpropagation
 }
 
 type Params struct {
@@ -119,6 +120,19 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 		params: params,
 		input:  make([]float32, inputSize), // Preallocate input slice for FeedForward
 	}
+
+	// Determine max size for prevLayerOutputsBuffer.
+	// This buffer will hold outputs of layer i-1 when processing layer i.
+	// The largest such i-1 layer could be the input layer or any hidden layer.
+	maxPrevLayerSize := inputSize
+	if numHiddenLayers > 0 {
+		for _, size := range hiddenConfig {
+			if size > maxPrevLayerSize {
+				maxPrevLayerSize = size
+			}
+		}
+	}
+	nn.prevLayerOutputsBuffer = make([]float32, maxPrevLayerSize)
 
 	// prevLayerNeuronCount tracks the number of neurons in the layer that feeds into the current one.
 	// It starts with inputSize for the first hidden layer.
@@ -322,6 +336,10 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	if nn.input != nil {
 		clone.input = make([]float32, len(nn.input))
 		copy(clone.input, nn.input)
+	}
+	if nn.prevLayerOutputsBuffer != nil {
+		clone.prevLayerOutputsBuffer = make([]float32, len(nn.prevLayerOutputsBuffer))
+		copy(clone.prevLayerOutputsBuffer, nn.prevLayerOutputsBuffer)
 	}
 
 	return clone
@@ -546,7 +564,13 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 			prevLayerOutputs = nn.input // Activations from input layer (i.e., the input sample itself)
 		} else {
 			prevLayer := nn.layers[layerIndex-1]
-			prevLayerOutputs = make([]float32, len(prevLayer.neurons))
+			currentPrevLayerNumNeurons := len(prevLayer.neurons)
+			// Ensure buffer is large enough (should be by design from initialise)
+			if cap(nn.prevLayerOutputsBuffer) < currentPrevLayerNumNeurons {
+				// This is a fallback, ideally initialise sizes it correctly.
+				nn.prevLayerOutputsBuffer = make([]float32, currentPrevLayerNumNeurons)
+			}
+			prevLayerOutputs = nn.prevLayerOutputsBuffer[:currentPrevLayerNumNeurons] // Re-slice the buffer
 			for pIdx, pNeuron := range prevLayer.neurons {
 				prevLayerOutputs[pIdx] = pNeuron.output // Activations from the previous layer
 			}
