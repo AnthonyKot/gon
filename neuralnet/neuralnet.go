@@ -433,7 +433,7 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 			}
 
 			// After processing all samples in the mini-batch (either single or multi-threaded), apply the averaged gradients
-			nn.applyAveragedGradients(currentMiniBatchSize, nn.params.Lr)
+			nn.applyAveragedGradients(currentMiniBatchSize, nn.Params.Lr)
 
 			totalEpochLoss += miniBatchLoss
 			samplesProcessedInEpoch += currentMiniBatchSize
@@ -461,13 +461,13 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 	// 2. Calculate Output Layer Error (Delta):
 	// For cross-entropy loss combined with a softmax output layer, the error signal (delta)
 	// for each output neuron simplifies beautifully to (softmax_probability - target_probability).
-	props := nn.calculateProps() // Get softmax probabilities (float64)
+	props := nn.SoftmaxProbabilities() // Get softmax probabilities (float32)
 	if len(props) != len(labelSample) {
 		panic("backpropagateAndAccumulateForSample: props and labelSample length mismatch")
 	}
 	errVecData := make([]float64, len(props)) // Use []float64 directly
 	for i := range props {
-		errVecData[i] = props[i] - float64(labelSample[i]) // Manual subtraction
+		errVecData[i] = float64(props[i]) - float64(labelSample[i]) // Manual subtraction, ensure props[i] is float64
 	}
 
 	loss := nn.calculateLoss(labelSample) // Calculate loss for this sample
@@ -549,9 +549,9 @@ func (nn *NeuralNetwork) Output() []float32 {
 
 func (nn *NeuralNetwork) Predict(data []float32) int {
 	nn.FeedForward(data)
-	propsData := nn.calculateProps() // returns []float64
+	propsData := nn.SoftmaxProbabilities() // returns []float32
 	if len(propsData) == 0 {
-		panic("Predict: calculateProps returned empty slice") // Or handle error appropriately
+		panic("Predict: SoftmaxProbabilities returned empty slice") // Or handle error appropriately
 	}
 	maxVal := propsData[0]
 	idx := 0

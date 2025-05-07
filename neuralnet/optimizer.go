@@ -15,7 +15,7 @@ func (o *SGD) Apply(nn *NeuralNetwork, batchSize int) error {
     if batchSize <= 0 {
         return errors.New("invalid batch size")
     }
-    nn.applyAveragedGradients(batchSize, nn.params.lr)
-    nn.params.lr *= nn.params.decay
+    nn.applyAveragedGradients(batchSize, nn.Params.Lr)
+    nn.Params.Lr *= nn.Params.Decay
     return nil
 }
