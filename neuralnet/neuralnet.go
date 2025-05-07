@@ -187,7 +187,7 @@ func (nn *NeuralNetwork) FeedForward(input []float32) {
 			neuron.output += nn.input[j] * neuron.weights[j] // Use nn.input directly
 		}
 		neuron.output = nn.layers[0].activation.Activate(neuron.output) // Removed UseFloat64 flag
-		neuron.output = capValue(neuron.output, nn.params)
+		neuron.output = capValue(neuron.output)
 	}
 	// nn.input is already set.
 	// Process hidden and output layers (i >= 1) using direct loops
@@ -619,7 +619,7 @@ func (nn *NeuralNetwork) calculateProps() []float64 { // Return []float64
 	outputLayer := nn.layers[len(nn.layers)-1].neurons
 	output := make([]float32, len(outputLayer))
 	for i, neuron := range outputLayer {
-		neuron.output = capValue(neuron.output, nn.params)
+		neuron.output = capValue(neuron.output)
 		output[i] = neuron.output
 	}
 	softmax := softmax(output, nn.params)
