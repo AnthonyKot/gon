@@ -41,8 +41,8 @@ type NeuralNetwork struct {
 	input                   []float32
 	params                  Params
 	prevLayerOutputsBuffer []float32 // Buffer for backpropagation
-	optimizer               Optimizer   // Pluggable optimizer interface
-	lossFunction            LossFunction // Pluggable loss function
+	// optimizer               Optimizer   // Removed: Unused
+	// lossFunction            LossFunction // Removed: Unused
 }
 
 type Params struct {
@@ -50,7 +50,7 @@ type Params struct {
 	decay  float32
 	L2     float32
 	lowCap float32
-	relu   float32
+	// relu   float32 // Removed: Unused
 	// jacobian bool // Removed, no longer used
 	// bn                  float32 // Removed: Unused
 	MomentumCoefficient float32

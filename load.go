@@ -310,9 +310,9 @@ func runTrainingSession(
 	initialDecay float32,
 	initialL2 float32,
 	initialLowCap float32,
-	initialRelu float32,
+	// initialRelu float32, // Removed
 	initialMomentum float32,
-	initialBN float32,
+	// initialBN float32, // Removed
 ) {
 	fmt.Printf("\n--- Starting Training Session (Calculations use float64 internally) ---\n")
 
@@ -458,9 +458,9 @@ func main() {
 	initialDecay := float32(0.95)
 	initialL2 := float32(1e-4)
 	initialLowCap := float32(0.0)
-	initialRelu := float32(0.0)      // Assuming this is the default for LeakyReLU alpha if relu param is for that
+	// initialRelu := float32(0.0) // Removed
 	initialMomentum := float32(0.9)
-	initialBN := float32(0.0)
+	// initialBN := float32(0.0) // Removed
 
 	baseNumWorkers := runtime.NumCPU() // Use number of available CPUs for workers
 
@@ -468,7 +468,7 @@ func main() {
 	runTrainingSession(
 		inputs, labels, imgs, descr,
 		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
-		initialLR, initialDecay, initialL2, initialLowCap, initialRelu, initialMomentum, initialBN,
+		initialLR, initialDecay, initialL2, initialLowCap, /*initialRelu,*/ initialMomentum, /*initialBN,*/
 	)
 
 	// End of main function
