@@ -99,13 +99,18 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
         }
 
         first := &Layer{
-                neurons: make([]*Neuron, inputSize),
+                neurons: make([]*Neuron, hidden[0]),
                 activation: Linear{},
         }
+        for j := range first.neurons {
+                first.neurons[j] = &Neuron{
+                        weights:  make([]float32, inputSize),
+                        bias:     0,
+                        momentum: make([]float32, inputSize),
+                }
                 for k := range first.neurons[j].weights {
                         first.neurons[j].weights[k] = xavierInit(inputSize, hidden[0], nn.params)
                 }
-                first.neurons[j].momentum = make([]float32, inputSize)
         }
         nn.layers[0] = first
 
