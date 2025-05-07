@@ -7,4 +7,4 @@ export GOSUMDB=sum.golang.org
 
 # Run the main program
 cd "$(dirname "$0")"
-go run load.go
+go run load.go "$@"
