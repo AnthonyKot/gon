@@ -590,8 +590,7 @@ func main() {
 	initialLR := float32(*flagLR)
 	initialDecay := float32(*flagDecay)
 	initialL2 := float32(*flagL2)
-	// initialLowCap := float32(0.0) // Removed
-	initialMomentum := float32(0.9)
+	initialMomentum := float32(*flagMomentum)
 	fmt.Printf("Initial LR: %.5f, Decay: %.5f, L2: %.6f, Momentum: %.5f\n", initialLR, initialDecay, initialL2, initialMomentum)
 
 	baseNumWorkers := *flagWorkers // Use number of workers from command-line flag
