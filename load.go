@@ -12,7 +12,8 @@ import (
 	"math/rand"
 
 	"flag"
-    "runtime/pprof"
+	"runtime"
+	"runtime/pprof"
 
 	"gonum.org/v1/gonum/mat"
 )
