@@ -652,9 +652,33 @@ func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
 	return loss
 }
 
-// convertWeightsDense function removed as unused.
+// Helper function to convert a layer's weights into a mat.Dense matrix
+// Rows = number of neurons in the layer, Cols = number of weights per neuron (inputs)
+func convertWeightsToDense(layer *Layer) *mat.Dense {
+	if len(layer.neurons) == 0 {
+		return mat.NewDense(0, 0, nil) // Handle empty layer
+	}
+	numNeurons := len(layer.neurons)
+	numWeightsPerNeuron := len(layer.neurons[0].weights)
+	weightsData := make([]float64, numNeurons*numWeightsPerNeuron)
 
-// convertBiasToDense function removed as unused.
+	for i, neuron := range layer.neurons {
+		for j, weight := range neuron.weights {
+			weightsData[i*numWeightsPerNeuron+j] = float64(weight)
+		}
+	}
+	return mat.NewDense(numNeurons, numWeightsPerNeuron, weightsData)
+}
+
+// Helper function to convert a layer's biases into a mat.VecDense vector
+func convertBiasesToVecDense(layer *Layer) *mat.VecDense {
+	numNeurons := len(layer.neurons)
+	biasesData := make([]float64, numNeurons)
+	for i, neuron := range layer.neurons {
+		biasesData[i] = float64(neuron.bias)
+	}
+	return mat.NewVecDense(numNeurons, biasesData)
+}
 
 
 // stableSoftmax computes softmax in a numerically stable way.
