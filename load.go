@@ -189,7 +189,7 @@ func flatten(image mat.Dense) mat.VecDense {
 	return *vec
 }
 
-func converImagesToInputs(images [][]mat.Dense) []mat.VecDense {
+func convertImagesToInputs(images [][]mat.Dense) []mat.VecDense {
 	inputs := make([]mat.VecDense, len(images))
 	for i := 0; i < len(inputs); i++ {
 		bwImage := RGBToBlackWhite(images[i]) // Convert to BW first
@@ -198,17 +198,6 @@ func converImagesToInputs(images [][]mat.Dense) []mat.VecDense {
 	return inputs
 }
 
-func finMaxIdx(output []float32) int {
-	index := 0
-	max := output[0]
-	for i := 0; i < len(output); i++ {
-		if max < output[i] {
-			max = output[i]
-			index = i
-		}
-	}
-	return index
-}
 
 func load() ([][]mat.Dense, []mat.VecDense) {
 	images, labels, err := loadCIFAR10("data/data_batch_1.bin")
@@ -301,7 +290,7 @@ func main() {
 	descr := readLabels()
 	// input layer + 1 hidden layer + output layer
 	// around 250k params ~ 1000*250
-	inputs := converImagesToInputs(imgs)
+	inputs := convertImagesToInputs(imgs)
 
 	// Shuffle the entire dataset (inputs and labels consistently) before splitting
 	// to ensure training/validation batches are representative.
