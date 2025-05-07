@@ -699,6 +699,8 @@ func capValue(value float32) float32 {
 	if math.IsInf(float64(value), -1) {
 		return -DefaultMaxAbsValue
 	}
+	// Note: The logic for handling non-zero lowCap (enforcing min/max magnitudes)
+	// was removed as lowCap is currently unused and always defaults to 0.
 	return value
 }
 
