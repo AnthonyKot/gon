@@ -471,6 +471,10 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
                             }
                         }
                         
+                        // Set main nn.input from a worker to avoid empty nn.input
+                        if len(workerNNs) > 0 {
+                                nn.input = workerNNs[0].input
+                        }
                         // Do single backpropagation with accumulated loss from all workers
                         nn.Backpropagate(len(currentData))
                         // Learning rate decay was here, moved to end of epoch
