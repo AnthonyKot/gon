@@ -245,6 +245,25 @@ func main() {
 	// around 250k params ~ 1000*250
 	inputs := converImagesToInputs(imgs)
 
+	// Shuffle the entire dataset (inputs and labels consistently) before splitting
+	// to ensure training/validation batches are representative.
+	if len(inputs) != len(labels) {
+		panic("Mismatch between number of inputs and labels before shuffling.")
+	}
+	datasetSize := len(inputs)
+	permutation := rand.Perm(datasetSize)
+
+	shuffledInputs := make([]mat.VecDense, datasetSize)
+	shuffledLabels := make([]mat.VecDense, datasetSize)
+
+	for i := 0; i < datasetSize; i++ {
+		shuffledInputs[i] = inputs[permutation[i]]
+		shuffledLabels[i] = labels[permutation[i]]
+	}
+	// Use the shuffled data from now on
+	inputs = shuffledInputs
+	labels = shuffledLabels
+
 	// Tanh works the best without Jacobian calculation
 	from := 0
 	to := from + 8000
