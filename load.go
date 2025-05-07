@@ -255,14 +255,18 @@ func main() {
 
 	shuffledInputs := make([]mat.VecDense, datasetSize)
 	shuffledLabels := make([]mat.VecDense, datasetSize)
+	shuffledColorImgs := make([][]mat.Dense, datasetSize) // For shuffling the original color images
 
 	for i := 0; i < datasetSize; i++ {
-		shuffledInputs[i] = inputs[permutation[i]]
-		shuffledLabels[i] = labels[permutation[i]]
+		idx := permutation[i] // Original index from permutation
+		shuffledInputs[i] = inputs[idx] // inputs here is original b/w flattened
+		shuffledLabels[i] = labels[idx] // labels here is original one-hot
+		shuffledColorImgs[i] = imgs[idx]  // imgs here is original color images
 	}
 	// Use the shuffled data from now on
 	inputs = shuffledInputs
 	labels = shuffledLabels
+	imgs = shuffledColorImgs // Assign the shuffled color images back to imgs
 
 	fmt.Printf("Total samples loaded: %d\n", len(inputs))
 
