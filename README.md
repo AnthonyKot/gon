@@ -86,3 +86,29 @@ Copy and paste: Copy the contents of `neuralnet` directory into your own project
 
 Import as a module: Place `neuralnet` directory within your project and use it as a module:
 [end of README.md]
+
+
+Go result:
+--- Per-Class Validation Accuracy ---
+Accuracy of airplane : 31 %
+Accuracy of automobile : 18 %
+Accuracy of     bird : 42 %
+Accuracy of      cat : 18 %
+Accuracy of     deer : 28 %
+Accuracy of      dog : 19 %
+Accuracy of     frog : 36 %
+Accuracy of    horse : 31 %
+Accuracy of     ship : 66 %
+Accuracy of    truck : 39 %
+------------------------------------
+
+scipy result:
+> Accuracy of   car : 41 %
+> Accuracy of  bird : 22 %
+> Accuracy of   cat : 18 %
+> Accuracy of  deer : 48 %
+> Accuracy of   dog : 35 %
+> Accuracy of  frog : 32 %
+> Accuracy of horse : 34 %
+> Accuracy of  ship : 56 %
+> Accuracy of truck : 60 % 
