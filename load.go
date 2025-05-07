@@ -85,34 +85,7 @@ func loadCIFAR10(filePath string) ([][][]float64, []int, error) {
 	return images, labels, nil
 }
 
-func readLabels() []string {
-		_, err := io.ReadFull(file, data)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, nil, err
-		}
-		for i := 0; i < Batch; i++ {
-			row := data[i*Row : (i+1)*Row]
-			labels[i] = int(row[0])
-
-			pixels := row[LabelSize : LabelSize+ImageSize]
-			norm := make([]float64, ImageSize)
-			for i := 0; i < len(pixels); i++ { // Corrected loop to start from 0
-				norm[i] = float64(pixels[i]) / 255.0
-			}
-			image := make([]mat.Dense, 3)
-			for i := 0; i < Colors; i++ {
-				channel := norm[i*Channel : (i+1)*Channel]
-				image[i] = *mat.NewDense(32, 32, channel)
-			}
-			images[i] = image
-		}
-	}
-
-	return images, labels, nil
-}
+// Removed duplicated block from loadCIFAR10
 
 func readLabels() []string {
 	file, err := os.Open("data/batches.meta.txt")
