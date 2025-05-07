@@ -22,27 +22,27 @@ const DefaultMaxAbsValue = float32(1e10)
 const MAX_WORKERS int = 12
 
 type Neuron struct {
-	weights  []float32
-	bias     float32
-	output   float32
-	momentum []float32
+	Weights  []float32
+	Bias     float32
+	Output   float32
+	Momentum []float32
 	// Fields for accumulating gradients in batch training
-	accumulatedWeightGradients []float32
-	accumulatedBiasGradient    float32
+	AccumulatedWeightGradients []float32
+	AccumulatedBiasGradient    float32
 }
 
 type Layer struct {
-	neurons    []*Neuron
-	deltas     []float32
-	activation ActivationFunction
+	Neurons    []*Neuron
+	Deltas     []float32
+	Activation ActivationFunction
 }
 
 // Represents the simplest NN.
 type NeuralNetwork struct {
-	layers                  []*Layer
-	input                   []float32
-	params                  Params
-	prevLayerOutputsBuffer []float32 // Buffer for backpropagation
+	Layers                  []*Layer
+	Input                   []float32
+	Params                  Params
+	PrevLayerOutputsBuffer []float32 // Buffer for backpropagation
 }
 
 type Params struct {
