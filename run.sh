@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Set necessary Go environment variables
-export GOROOT=/opt/homebrew/Cellar/go/1.24.0/libexec
+# Configure Go environment; GOROOT omitted to use system default
 export GOPROXY=https://proxy.golang.org,direct
 export GOSUMDB=sum.golang.org
 
