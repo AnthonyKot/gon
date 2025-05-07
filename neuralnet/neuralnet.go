@@ -4,7 +4,6 @@ import (
         "fmt"
 	"strings"
         "math"
-        "sync"
         "time"
         "math/rand"
         "gonum.org/v1/gonum/diff/fd"
