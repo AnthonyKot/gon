@@ -1,21 +1,5 @@
 # gon: CIFAR-10 Neural Network
 
-
-
-## Hyperparameter Tuning (Grid Search Suggestion)
-
-To find optimal hyperparameters, a grid search could be implemented. Here's a suggested set of parameters and values targeting ~96 combinations:
-
-- **Learning Rate (`-lr`)**: `[0.05, 0.01, 0.005, 0.001]` (4 values)
-- **L2 Regularization** (Requires adding a flag, e.g., `-l2`): `[0, 1e-5, 1e-4, 1e-3]` (4 values)
-- **Momentum Coefficient** (Requires adding a flag, e.g., `-momentum`): `[0.9, 0.95]` (2 values)
-- **Mini-batch Size (`-batch`)**: `[32, 64, 128]` (3 values)
-
-Note: Implementing grid search would involve modifying `load.go` to iterate through these combinations, potentially running multiple training sessions and logging results. Flags would need to be added for L2 and Momentum.
-[end of README.md]
-
-
-
 ## Overview
 This Go project implements a feedforward neural network for CIFAR-10 image classification. It supports multi-threaded mini-batch training, momentum SGD, and model save/load via JSON, using standard Go slices for internal calculations.
 
@@ -108,9 +92,38 @@ The following improvements have been implemented:
 - **Configuration**: Key hyperparameters are configurable via flags.
 - **Dependency Removal**: Removed dependency on Gonum.
 
-### Future Work
--   **CIFAR color support**: Using color information should improve accuracy.
--   **Dropout/Batch Norm**: Implement other regularization techniques.
+### ML Concepts Demonstrated
+- **Multi-Layer Perceptron (MLP)**: A basic feedforward neural network structure.
+- **Activation Functions**: ReLU (hidden layers), Linear (output layer before Softmax).
+- **Feedforward Propagation**: How input signals travel through the network.
+- **Backpropagation**: The core algorithm for calculating gradients (errors).
+- **Cross-Entropy Loss**: A standard loss function for multi-class classification.
+- **Softmax**: Used to convert raw network outputs into probabilities.
+- **Stochastic Gradient Descent (SGD)**: The optimization algorithm used to update weights.
+- **Momentum**: An enhancement to SGD to accelerate convergence.
+- **L2 Regularization**: A technique to prevent overfitting by penalizing large weights.
+- **Mini-Batch Training**: Processing data in small batches for efficiency and better generalization.
+- **Weight Initialization**: Using Xavier/Glorot initialization to aid training stability.
+- **Concurrency in Go**: Using goroutines, WaitGroups, and Mutexes for parallel processing.
+
+### Limitations
+- **MLP for Images**: While functional, MLPs are generally outperformed by Convolutional Neural Networks (CNNs) for image tasks like CIFAR-10 because CNNs are designed to explicitly handle spatial hierarchies in images. This project uses grayscale images and flattens them, losing spatial information.
+- **Error Handling**: Uses `panic` for critical errors during setup or for internal inconsistencies. A production system might require more granular error returns.
+- **Testing**: Lacks automated unit or integration tests.
+
+### Future Work / TODOs
+- Use color image data instead of converting to grayscale.
+- Implement dropout regularization.
+- Implement batch normalization.
+- Explore image augmentation techniques.
+- Explore other optimizers (e.g., Adam) or 2nd order methods.
+- Preprocess input data to [-1, 1] range or standardize.
+- Add more comprehensive unit and integration tests.
+- Implement Grid Search for hyperparameter tuning (see suggestions below).
+- Make network architecture (hidden layer sizes) configurable via flags.
+- Make activation functions configurable.
+- Consider manual garbage collection tuning (if necessary).
+- Dockerization and CI/CD integration.
 
 ### Installation
 
