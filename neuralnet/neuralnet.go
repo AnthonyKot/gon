@@ -153,7 +153,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
         for l := 0; l < outputSize; l++ {
                 output.neurons[l] = &Neuron{
                         weights: make([]float32, len(nn.layers[len(nn.layers) - 2].neurons)),
-                        bias:    xavierInit(len(nn.layers[len(nn.layers) - 2].neurons), outputSize, nn.params),
+                        bias:    0,
                 }
                 // TODO: use gauss to init weights
                 for k := range output.neurons[l].weights {
