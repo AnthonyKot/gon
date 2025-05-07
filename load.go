@@ -258,17 +258,16 @@ func main() {
 	j := 0
 	for i := 0; i < epochs; i++ {
 		nn.TrainBatch(inputs[from:to], labels[from:to], 1)
-		j = to + rand.Intn((to - from) / train_to_validation)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
-		fmt.Println(nn.Output())
-		j = to + rand.Intn((to - from) / train_to_validation)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
-		fmt.Println(nn.Output())
-		j = to + rand.Intn((to - from) / train_to_validation)
-		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
-		fmt.Println(nn.Output())
-		fmt.Println("train", accuracy(nn, inputs, labels, from, to))
-		fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from) / train_to_validation)))
+		for sample := 0; sample < 3; sample++ {
+			j = to + rand.Intn((to - from) / train_to_validation)
+			pred := nn.Predict(inputs[j])
+			saveImg(imgs, labels, descr, j, pred)
+			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
+		}
+		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n",
+			accuracy(nn, inputs, labels, from, to),
+			accuracy(nn, inputs, labels, to, to+((to-from)/train_to_validation)),
+		)
 		fmt.Println()
 	}
 
