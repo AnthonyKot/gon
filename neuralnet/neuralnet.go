@@ -50,9 +50,6 @@ type Params struct {
 	decay  float32
 	L2     float32
 	lowCap float32
-	// relu   float32 // Removed: Unused
-	// jacobian bool // Removed, no longer used
-	// bn                  float32 // Removed: Unused
 	MomentumCoefficient float32
 }
 
@@ -70,8 +67,6 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
 		decay:               decay,
 		L2:                  regularization,
 		lowCap:              cap,
-		// relu field removed
-		// bn field removed
 		MomentumCoefficient: momentumCoefficient,
 	}
 }
@@ -82,8 +77,6 @@ func defaultParams() *Params {
 		decay:  0.95, // Reduced decay rate
 		L2:     1e-4, // Enabled L2 regularization
 		lowCap: 0,
-		// relu field removed
-		// bn field removed
 		MomentumCoefficient: 0.9, // Default momentum coefficient
 	}
 }
@@ -92,8 +85,6 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
 	params := defaultParams()
 	nn := initialise(inputSize, hidden, outputSize, *params)
 	// optimizer and lossFunction fields removed from NeuralNetwork struct
-	// nn.optimizer = &SGD{}             // Default optimizer - Removed
-	// nn.lossFunction = &CrossEntropy{} // Default loss - Removed
 	return nn
 }
 

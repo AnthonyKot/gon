@@ -330,9 +330,7 @@ func runTrainingSession(
 		initialDecay,
 		initialL2,
 		initialLowCap,
-		// initialRelu, // Removed
 		initialMomentum,
-		// initialBN, // Removed
 	)
 
 	// Use NumClasses constant and derive input size
@@ -438,7 +436,6 @@ func main() {
 	trainingSetSize := int(float64(datasetSize) * TrainSplitRatio)
 	to := trainingSetSize // 'to' is the end index (exclusive) for training data
 	epochs := NumEpochs
-	// train_to_validation := 4 // Removed
 
 	validationSetSize := datasetSize - trainingSetSize // Use remaining data for validation
 	miniBatchSize := MiniBatchSize
@@ -464,9 +461,7 @@ func main() {
 	initialDecay := float32(0.95)
 	initialL2 := float32(1e-4)
 	initialLowCap := float32(0.0)
-	// initialRelu := float32(0.0) // Removed
 	initialMomentum := float32(0.9)
-	// initialBN := float32(0.0) // Removed
 
 	baseNumWorkers := runtime.NumCPU() // Use number of available CPUs for workers
 
