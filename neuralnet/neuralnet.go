@@ -51,8 +51,7 @@ type Params struct {
 
 
 // NewParams creates a Params struct with default values for non-specified fields.
-// Note: 'cap' parameter is unused as lowCap was removed. Consider removing 'cap' parameter.
-func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
+func NewParams(learningRate float32, decay float32, regularization float32) Params {
 	// Calls NewParamsFull, providing default values for momentum
 	defaults := defaultParams()
 	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient)

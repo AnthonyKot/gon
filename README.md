@@ -89,8 +89,8 @@ This code implements a simple feedforward neural network for image classificatio
     -   Supports saving/loading the trained model via JSON.
     -   Implements momentum for SGD.
 - **Data Loading (`load.go`):**
-    -   Handles loading the CIFAR-10 dataset (binary format).
-    -   Includes functions to convert RGB images to grayscale and flatten them.
+    -   Handles loading the CIFAR-10 dataset from the specific binary batch format (1 label byte + 3072 pixel bytes per image).
+    -   Includes functions to convert RGB images to grayscale and flatten them for the MLP input layer.
 - **Activation Functions (`neuralnet/activations.go`):**
     -   Defines various activation functions and their derivatives.
 ### Usage
