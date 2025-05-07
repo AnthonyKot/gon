@@ -350,13 +350,10 @@ func runTrainingSession(
 		initialMomentum,
 	)
 
-	// Use NumClasses constant and derive input size
+	// Use NumClasses constant and derive input size (D*D)
 	inputSize := D * D
 	nn := neuralnet.NewNeuralNetwork(inputSize, []int{512, 256}, NumClasses, currentParams)
-	// Ensure the optimizer is set if NewNeuralNetwork doesn't set a default one
-	// or if a specific one is desired. DefaultNeuralNetwork sets SGD.
-	// If NewNeuralNetwork is used directly, optimizer might need to be set manually:
-	// nn.SetOptimizer(&neuralnet.SGD{}) // Example if needed
+	// Note: Optimizer/Loss logic is currently internal to training/loss functions.
 
 	j := 0 // Used for saving sample images
 	numWorkers := baseNumWorkers

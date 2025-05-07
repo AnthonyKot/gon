@@ -744,44 +744,16 @@ func capValue(value float32, params Params) float32 {
 	if params.lowCap == 0 {
 		// Optional: could cap 'value' against DefaultMaxAbsValue here too for extreme finite values
 		// if abs(value) > DefaultMaxAbsValue, but current logic defers this to lowCap != 0 case.
+		// Since lowCap is always 0 in defaultParams and not configurable via flags,
+		// the logic below for non-zero lowCap is currently dead code.
+		// If lowCap were configurable, this logic would apply min/max magnitudes.
 		return value
 	}
 
-	// This part executes if params.lowCap != 0 (and value is finite).
-	// params.lowCap is assumed to be the minimum desired absolute magnitude.
-	// Ensure minMagnitude is non-negative.
-	minMagnitude := params.lowCap
-	if params.lowCap < 0 { // If lowCap is negative (unusual), treat min magnitude as 0.
-		minMagnitude = 0
-	}
-
-	// Determine the effective upper cap for magnitude.
-	effectiveUpperCap := DefaultMaxAbsValue
-	if params.lowCap > 0 { // Ensure lowCap is positive before division for 1/lowCap.
-		calculatedUpperCap := 1.0 / params.lowCap
-		// Use calculatedUpperCap if it's smaller than DefaultMaxAbsValue and positive.
-		if calculatedUpperCap < effectiveUpperCap && calculatedUpperCap > 0 {
-			effectiveUpperCap = calculatedUpperCap
-		}
-	}
-
-	// Use absolute value for capping logic, then restore sign.
-	absVal := value
-	sign := float32(1.0)
-	if value < 0 {
-		absVal = -value
-		sign = -1.0
-	}
-
-	cappedAbsVal := absVal
-	if cappedAbsVal < minMagnitude { // Apply minimum magnitude
-		cappedAbsVal = minMagnitude
-	}
-	if cappedAbsVal > effectiveUpperCap { // Apply maximum magnitude
-		cappedAbsVal = effectiveUpperCap
-	}
-
-	return sign * cappedAbsVal
+	// // Dead code path removed:
+	// // This part executes if params.lowCap != 0 (and value is finite).
+	// // ... (logic for minMagnitude, effectiveUpperCap, capping) ...
+	// return sign * cappedAbsVal
 }
 
 // selectSamples function removed as unused.
@@ -797,7 +769,7 @@ func (nn *NeuralNetwork) Save(filename string) {
 	if err != nil {
 		panic(err)
 	}
-	println("Model saved as " + filename)
+	fmt.Printf("Model saved as %s\n", filename) // Use fmt.Printf for consistency
 }
 func loadModel(filename string) *NeuralNetwork {
 	file, err := os.Open(filename)
@@ -811,7 +783,7 @@ func loadModel(filename string) *NeuralNetwork {
 	if err != nil {
 		panic(err)
 	}
-	println("Model load as " + filename)
+	fmt.Printf("Model loaded from %s\n", filename) // Use fmt.Printf for consistency
 	return nn
 }
 func (l *Layer) String() string {
