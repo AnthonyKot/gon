@@ -160,7 +160,7 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 }
 
 func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
-        return initialise(inputSize, hidden, outputSize, params)
+        return initialise(inputSize, hiddenConfig, outputSize, params)
 }
 
 
