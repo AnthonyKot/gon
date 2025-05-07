@@ -354,11 +354,76 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
 }
 
 /*
- TrainMiniBatch wrapper is currently stubbed pending refactor.
- Direct use of minibatch training is disabled.
+ TrainMiniBatch processes the training data in mini-batches.
+ - trainingData: The input samples.
+ - expectedOutputs: The corresponding target labels.
+ - batchSize: The number of samples in each mini-batch.
+ - epochs: The total number of times to iterate over the entire dataset.
 */
-func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-        panic("TrainMiniBatch is not implemented; pending refactor")
+func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchSize int, epochs int) {
+    numSamples := len(trainingData)
+    if numSamples == 0 {
+        fmt.Println("TrainMiniBatch: No training data provided.")
+        return
+    }
+    if batchSize <= 0 || batchSize > numSamples {
+        fmt.Printf("TrainMiniBatch: Invalid batchSize %d. Setting to numSamples %d.\n", batchSize, numSamples)
+        batchSize = numSamples // Fallback to full batch if batchSize is invalid
+    }
+
+    for e := 0; e < epochs; e++ {
+        var totalEpochLoss float32 = 0.0
+        var samplesProcessedInEpoch int = 0
+
+        // Shuffle data at the beginning of each epoch
+        permutation := rand.Perm(numSamples)
+        shuffledTrainingData := make([]mat.VecDense, numSamples)
+        shuffledExpectedOutputs := make([]mat.VecDense, numSamples)
+        for i := 0; i < numSamples; i++ {
+            shuffledTrainingData[i] = trainingData[permutation[i]]
+            shuffledExpectedOutputs[i] = expectedOutputs[permutation[i]]
+        }
+
+        // Iterate over mini-batches
+        for i := 0; i < numSamples; i += batchSize {
+            end := i + batchSize
+            if end > numSamples {
+                end = numSamples // Adjust for the last batch if it's smaller
+            }
+            
+            currentMiniBatchSize := end - i
+            if currentMiniBatchSize == 0 {
+                continue // Should not happen if numSamples > 0
+            }
+
+            nn.zeroAccumulatedGradients() // Zero out accumulators for the new mini-batch
+            var miniBatchLoss float32 = 0.0
+
+            for j := i; j < end; j++ { // Process samples in the current mini-batch
+                dataSample := shuffledTrainingData[j]
+                labelSample := shuffledExpectedOutputs[j]
+                
+                sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
+                miniBatchLoss += sampleLoss
+            }
+
+            // After processing all samples in the mini-batch, apply the averaged gradients
+            nn.applyAveragedGradients(currentMiniBatchSize, nn.params.lr)
+            
+            totalEpochLoss += miniBatchLoss
+            samplesProcessedInEpoch += currentMiniBatchSize
+        }
+        
+        averageEpochLoss := float32(0.0)
+        if samplesProcessedInEpoch > 0 {
+             averageEpochLoss = totalEpochLoss / float32(samplesProcessedInEpoch)
+        }
+       
+        fmt.Printf("Loss MiniBatch Epoch %d = %.2f (LR: %.5f)\n", e, averageEpochLoss, nn.params.lr)
+        
+        // Apply learning rate decay at the end of each epoch
+        nn.params.lr *= nn.params.decay
+    }
 }
 
 // backpropagateAndAccumulateForSample performs feedforward, calculates loss,
