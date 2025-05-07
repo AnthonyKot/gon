@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"gonum.org/v1/gonum/mat"
 )
 
 // DefaultMaxAbsValue defines a large finite number to cap extreme values, preventing Inf propagation.
@@ -244,7 +242,7 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 
 // TrainSGD is updated to use the new gradient accumulation and application mechanism.
 // For SGD, the "batch size" is 1 for gradient application.
-func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, epochs int) {
+func (nn *NeuralNetwork) TrainSGD(trainingData [][]float32, expectedOutputs [][]float32, epochs int) {
 	numSamples := len(trainingData)
 	if numSamples == 0 {
 		fmt.Println("TrainSGD: No training data provided.")
@@ -376,8 +374,8 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
 
 		// Shuffle data at the beginning of each epoch
 		permutation := rand.Perm(numSamples)
-		shuffledTrainingData := make([]mat.VecDense, numSamples)
-		shuffledExpectedOutputs := make([]mat.VecDense, numSamples)
+		shuffledTrainingData := make([][]float32, numSamples)
+		shuffledExpectedOutputs := make([][]float32, numSamples)
 		for i := 0; i < numSamples; i++ {
 			shuffledTrainingData[i] = trainingData[permutation[i]]
 			shuffledExpectedOutputs[i] = expectedOutputs[permutation[i]]
@@ -494,14 +492,19 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
 // backpropagateAndAccumulateForSample performs feedforward, calculates loss,
 // computes sample-specific deltas, and accumulates gradients for a single sample.
 // It returns the loss for this sample.
-func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecDense, labelSample mat.VecDense) float32 {
+func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float32, labelSample []float32) float32 {
 	// 1. FeedForward for the current sample
 	nn.FeedForward(dataSample)
 
 	// 2. Calculate error vector for this sample (softmax_output - target)
-	props := nn.calculateProps() // Uses current nn.output (from dataSample's FeedForward)
-	errVec := mat.NewVecDense(props.Len(), nil)
-	errVec.SubVec(props, &labelSample)
+	props := nn.calculateProps() // Uses current nn.output (from dataSample's FeedForward), returns []float64
+	if len(props) != len(labelSample) {
+		panic("backpropagateAndAccumulateForSample: props and labelSample length mismatch")
+	}
+	errVecData := make([]float64, len(props)) // Use []float64 directly
+	for i := range props {
+		errVecData[i] = props[i] - float64(labelSample[i]) // Manual subtraction
+	}
 
 	loss := nn.calculateLoss(labelSample) // Uses current nn.output
 
@@ -591,9 +594,9 @@ func (nn *NeuralNetwork) Output() []float32 {
 	return output
 }
 
-func (nn *NeuralNetwork) Predict(data mat.VecDense) int {
+func (nn *NeuralNetwork) Predict(data []float32) int {
 	nn.FeedForward(data)
-	props := nn.calculateProps()
+	props := nn.calculateProps() // returns []float64
 	propsData := props.RawVector().Data // Get raw data
 	maxVal := propsData[0]              // Access raw data
 	idx := 0
@@ -607,7 +610,7 @@ func (nn *NeuralNetwork) Predict(data mat.VecDense) int {
 	return idx
 }
 
-func (nn *NeuralNetwork) calculateProps() *mat.VecDense {
+func (nn *NeuralNetwork) calculateProps() []float64 { // Return []float64
 	outputLayer := nn.layers[len(nn.layers)-1].neurons
 	output := make([]float32, len(outputLayer))
 	for i, neuron := range outputLayer {
@@ -620,16 +623,16 @@ func (nn *NeuralNetwork) calculateProps() *mat.VecDense {
 		v = capValue(v, nn.params)
 		softmaxFloat64[i] = float64(v)
 	}
-	return mat.NewVecDense(len(outputLayer), softmaxFloat64)
+	return softmaxFloat64 // Return the slice directly
 }
 
-func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
-	props := nn.calculateProps()
+func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is now []float32
+	propsData := nn.calculateProps() // Returns []float64
 	var loss float32 = 0.0
 
 	// Optimization: Access raw vector data to avoid repeated AtVec calls
-	propsData := props.RawVector().Data
-	targetData := target.RawVector().Data // target is mat.VecDense, so direct RawVector()
+	// propsData is already []float64
+	// targetData is now the input []float32
 
 	// Use float64 for intermediate loss calculation
 	var loss64 float64

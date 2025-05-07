@@ -18,7 +18,6 @@ import (
 
 	"gon/neuralnet"
 	"path/filepath" // Added for joining paths
-	"gonum.org/v1/gonum/mat"
 )
 
 const (
@@ -38,17 +37,55 @@ const (
 	NumSamplesToSave = 3
 )
 
-func loadCIFAR10(filePath string) ([][]mat.Dense, []int, error) {
+// Returns: list of images [image][channel][pixel_data_float64], list of labels [label_int], error
+func loadCIFAR10(filePath string) ([][][]float64, []int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer file.Close()
 
-	images := make([][]mat.Dense, Batch)
+	images := make([][][]float64, Batch) // Changed type
 	labels := make([]int, Batch)
-	for {
-		data := make([]byte, Batch*Row)
+	readCount := 0 // Keep track of how many images we've actually read
+	for readCount < Batch {
+		// Read one row (image + label) at a time for simplicity
+		row := make([]byte, Row)
+		n, err := io.ReadFull(file, row)
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break // End of file or incomplete row
+			}
+			return nil, nil, err
+		}
+		if n != Row {
+			// Should not happen with io.ReadFull unless EOF
+			break
+		}
+
+		labels[readCount] = int(row[0])
+
+		pixels := row[LabelSize : LabelSize+ImageSize]
+		norm := make([]float64, ImageSize)
+		for k := 0; k < len(pixels); k++ { // Corrected loop to start from 0
+			norm[k] = float64(pixels[k]) / 255.0
+		}
+		imageChannels := make([][]float64, Colors) // Changed type
+		for k := 0; k < Colors; k++ {
+			channel := norm[k*Channel : (k+1)*Channel]
+			imageChannels[k] = channel // Store the slice directly
+		}
+		images[readCount] = imageChannels
+		readCount++
+	}
+	// Trim slices if fewer than Batch images were read
+	images = images[:readCount]
+	labels = labels[:readCount]
+
+	return images, labels, nil
+}
+
+func readLabels() []string {
 		_, err := io.ReadFull(file, data)
 		if err != nil {
 			if err == io.EOF {
@@ -98,10 +135,11 @@ func readLabels() []string {
 	return words
 }
 
-func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, predIdx int) {
-	t := ts[sampleIdx] // Corrected: use sampleIdx instead of undefined i
+func saveImg(ts [][][]float64, ls [][]float32, ws []string, sampleIdx int, predIdx int) {
+	t := ts[sampleIdx] // t is now [][]float64
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
-	for y := 0; y < 32; y++ {
+	rows, cols := D, D // Assuming D=32
+	for y := 0; y < rows; y++ {
 		for x := 0; x < 32; x++ {
 			r := t[0].At(y, x)
 			r8 := uint8(r * 255.0)
@@ -147,23 +185,22 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, pr
 	fmt.Printf("Image saved as %s\n", fullPath) // Use fmt.Printf for consistency
 }
 
-func oneHotEncode(labels []int, numClasses int) []mat.VecDense {
-	encoded := make([]mat.VecDense, len(labels))
+func oneHotEncode(labels []int, numClasses int) [][]float32 { // Return [][]float32
+	encoded := make([][]float32, len(labels))
 	for i, label := range labels {
-		vec := mat.NewVecDense(numClasses, nil)
-		for j := 0; j < vec.Len(); j++ {
-			if label == j {
-				vec.SetVec(j, 1.0)
-			} else {
-				vec.SetVec(j, 0)
-			}
+		vec := make([]float32, numClasses) // Create slice
+		if label >= 0 && label < numClasses {
+			vec[label] = 1.0 // Set the corresponding index to 1.0
+		} else {
+			// Handle invalid label index if necessary
+			fmt.Printf("Warning: Invalid label %d found during one-hot encoding.\n", label)
 		}
-		encoded[i] = *vec
+		encoded[i] = vec
 	}
 	return encoded
 }
 
-func description(encoded mat.VecDense, desc []string) string {
+func description(encoded []float32, desc []string) string { // Input is []float32
 	for i := 0; i < encoded.Len(); i++ {
 		if encoded.AtVec(i) == 1.0 {
 			return desc[i]
@@ -172,56 +209,51 @@ func description(encoded mat.VecDense, desc []string) string {
 	panic("No suitable description")
 }
 
-func label(encoded mat.VecDense) int {
-	for i := 0; i < encoded.Len(); i++ {
-		if encoded.AtVec(i) == 1.0 {
+func label(encoded []float32) int { // Input is []float32
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] == 1.0 {
 			return i
 		}
 	}
 	panic("No suitable idx")
 }
 
-func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
-	// Create a new matrix to store the grayscale image
-	rows, cols := rgbImage[0].Dims()
-	grayImage := mat.NewDense(rows, cols, nil)
-
-	// Iterate over each pixel in the RGB image
-	for i := 0; i < rows; i++ {
-		for j := 0; j < cols; j++ {
-			// Calculate the grayscale value using the weighted average of RGB components
-			r, g, b := rgbImage[0].At(i, j), rgbImage[1].At(i, j), rgbImage[2].At(i, j)
-			gray := 0.299*r + 0.587*g + 0.114*b // Calculate grayscale as float64
-			grayImage.Set(i, j, gray)           // Set the normalized float64 value directly
-
-		}
+// Converts RGB image (represented as [][]float64 channels) to a flattened B&W []float32 slice
+func RGBToBlackWhiteFlattened(rgbImage [][]float64) []float32 {
+	if len(rgbImage) != Colors {
+		panic("RGBToBlackWhiteFlattened: Expected 3 color channels")
+	}
+	numPixels := len(rgbImage[0]) // Assuming all channels have same length
+	if numPixels != Channel {     // Channel = D*D
+		panic("RGBToBlackWhiteFlattened: Incorrect number of pixels per channel")
 	}
 
-	return *grayImage
-}
+	grayImage := make([]float32, numPixels)
 
-func flatten(image mat.Dense) mat.VecDense {
-	rows, cols := image.Dims()
-	vec := mat.NewVecDense(rows*cols, nil)
-	for i := 0; i < rows; i++ {
-		for j := 0; j < cols; j++ {
-			vec.SetVec(i*cols+j, image.At(i, j))
-		}
+	// Iterate over each pixel
+	for i := 0; i < numPixels; i++ {
+		r := rgbImage[0][i]
+		g := rgbImage[1][i]
+		b := rgbImage[2][i]
+		gray := 0.299*r + 0.587*g + 0.114*b // Calculate grayscale as float64
+		grayImage[i] = float32(gray)        // Store as float32
 	}
-	return *vec
+
+	return grayImage
 }
 
-func convertImagesToInputs(images [][]mat.Dense) []mat.VecDense {
-	inputs := make([]mat.VecDense, len(images))
+// flatten function removed as its logic is integrated into RGBToBlackWhiteFlattened
+
+func convertImagesToInputs(images [][][]float64) [][]float32 { // Input/Output types changed
+	inputs := make([][]float32, len(images))
 	for i := 0; i < len(inputs); i++ {
-		bwImage := RGBToBlackWhite(images[i]) // Convert to BW first
-		inputs[i] = flatten(bwImage)          // Then flatten
+		inputs[i] = RGBToBlackWhiteFlattened(images[i]) // Convert and flatten directly
 	}
 	return inputs
 }
 
 
-func load() ([][]mat.Dense, []mat.VecDense) {
+func load() ([][][]float64, [][]float32) { // Return types changed
 	images, labels, err := loadCIFAR10("data/data_batch_1.bin")
 	if err != nil {
 		fmt.Println("Error loading CIFAR-10:", err)
@@ -232,7 +264,7 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 	return images, out
 }
 
-func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int, numWorkers int) float32 {
+func accuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOutputs [][]float32, from int, to int, numWorkers int) float32 {
 	numSamplesToTest := to - from
 	if numSamplesToTest <= 0 {
 		return 0.0
@@ -303,9 +335,9 @@ var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func runTrainingSession(
 	// useFloat64Calc bool, // Parameter removed
-	inputs []mat.VecDense,
-	labels []mat.VecDense,
-	imgs [][]mat.Dense,
+	inputs [][]float32, // Changed type
+	labels [][]float32, // Changed type
+	imgs [][][]float64, // Changed type
 	descr []string,
 	from int,
 	to int,
@@ -414,9 +446,9 @@ func main() {
 	datasetSize := len(inputs)
 	permutation := rand.Perm(datasetSize)
 
-	shuffledInputs := make([]mat.VecDense, datasetSize)
-	shuffledLabels := make([]mat.VecDense, datasetSize)
-	shuffledColorImgs := make([][]mat.Dense, datasetSize) // For shuffling the original color images
+	shuffledInputs := make([][]float32, datasetSize)   // Changed type
+	shuffledLabels := make([][]float32, datasetSize)   // Changed type
+	shuffledColorImgs := make([][][]float64, datasetSize) // Changed type
 
 	for i := 0; i < datasetSize; i++ {
 		idx := permutation[i]            // Original index from permutation
