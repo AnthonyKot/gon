@@ -163,21 +163,6 @@ func NewNeuralNetwork(inputSize int, hidden []int, outputSize int, params Params
         return initialise(inputSize, hidden, outputSize, params)
 }
 
-func defaultParams() *Params {
-        return &Params{
-            lr:      0.001,
-            decay:   0.8,
-            L2:      0,
-            lowCap:  0,
-            relu:    0,
-            jacobian:false,
-        }
-}
-
-func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
-        params := defaultParams()
-        return initialise(inputSize, hidden, outputSize, *params)
-}
 
 func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunction) {
         nn.layers[layerIndex].activation = activation
