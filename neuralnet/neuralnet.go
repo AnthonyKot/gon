@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 // DefaultMaxAbsValue defines a large finite number to cap extreme values, preventing Inf propagation.
 const DefaultMaxAbsValue = float32(1e10)
 
@@ -88,7 +92,6 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
 
 // initialise creates and initializes the neural network structure, including layers, neurons, weights, and biases.
 func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
-	rand.Seed(time.Now().UnixNano()) // Seed random number generator for weight initialization
 
 	// Note: To support zero hidden layers (direct input to output), this function
 	// would need adjustments, particularly in how prevLayerNeuronCount is initialized
