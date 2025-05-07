@@ -547,38 +547,26 @@ func (nn *NeuralNetwork) calculateProps() *mat.VecDense {
 
 func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
         props := nn.calculateProps()
-        outputNeurons := nn.layers[len(nn.layers) - 1].neurons
         var loss float32 = 0.0
-        for i := 0; i < len(outputNeurons); i++ {
-                if (target.AtVec(i) == 1.0) {
-                        // Avoid log(0) which results in -Inf
-                        propValue := math.Max(props.AtVec(i), 1e-15)
-                        logValue := math.Log(propValue)
-                        
-                        // Handle Inf values
-                        if math.IsInf(logValue, -1) {
-                                logValue = -20.0 // Limit the negative log value
-                        }
-                        
-                        loss -= float32(logValue)
-                }
+        for i := 0; i < props.Len(); i++ {
+                p := float32(math.Max(props.AtVec(i), 1e-15))
+                // Cross-entropy: -sum target * log(p)
+                loss -= float32(target.AtVec(i)) * float32(math.Log(float64(p)))
         }
-        
-        // Add L2 regularization term
+        // L2 regularization: (lambda/2) * sum weights^2
+        var reg float32 = 0.0
         for _, layer := range nn.layers {
                 for _, neuron := range layer.neurons {
-                        for _, weight := range neuron.weights {
-                                loss += nn.params.L2 * weight * weight
-                                loss = capValue(loss, nn.params)
+                        for _, w := range neuron.weights {
+                                reg += w * w
                         }
                 }
         }
-        
-        // Final check for NaN
-        if math.IsNaN(float64(loss)) {
-                return 0.0 // Return a safe default value
+        loss += 0.5 * nn.params.L2 * reg
+        // Guard against NaN or Inf
+        if math.IsNaN(float64(loss)) || math.IsInf(float64(loss), 0) {
+                return 0.0
         }
-        
         return loss
 }
 
