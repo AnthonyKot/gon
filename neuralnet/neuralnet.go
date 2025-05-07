@@ -258,9 +258,12 @@ func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs [
                         labelSample := expectedOutputs[idx]
                         
                         nn.FeedForward(dataSample)
-                        nn.AccumulateLoss(labelSample) // Accumulates loss for backprop
+                        // Compute error vector: softmax - target
+                        props := nn.calculateProps()
+                        errVec := mat.NewVecDense(props.Len(), nil)
+                        errVec.SubVec(props, &labelSample)
                         totalEpochLoss += nn.calculateLoss(labelSample) // Sums individual sample losses for reporting
-                        nn.Backpropagate(1) // Backpropagate and update weights for this single sample
+                        nn.Backpropagate([]mat.VecDense{*errVec}) // Backpropagate and update weights for this single sample
                 }
                 
                 // Apply learning rate decay once per epoch
@@ -492,12 +495,18 @@ func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs
         for e := 0; e < epochs; e++ {
                 nn.params.lr = nn.params.lr * nn.params.decay
                 var loss float32 = 0.0
+                // Prepare error vectors for backpropagation
+                errors := make([]mat.VecDense, len(trainingData))
                 for i := 0; i < len(trainingData); i++ {
                         nn.FeedForward(trainingData[i])
-                        nn.AccumulateLoss(expectedOutputs[i])
+                        // Compute error vector: softmax - target
+                        props := nn.calculateProps()
+                        errVec := mat.NewVecDense(props.Len(), nil)
+                        errVec.SubVec(props, &expectedOutputs[i])
+                        errors[i] = *errVec
                         loss += nn.calculateLoss(expectedOutputs[i])
                 }
-                nn.Backpropagate(len(trainingData))
+                nn.Backpropagate(errors)
                 fmt.Println(fmt.Sprintf("Loss Batch %d = %.2f", e, loss / float32(len(trainingData))))
         }
 }
