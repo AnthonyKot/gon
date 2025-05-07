@@ -252,7 +252,8 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
 }
 
 func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
-        batchSize := 1 // Standard SGD processes one sample at a time
+        // Standard SGD processes one sample at a time, so batchSize is effectively 1.
+        // The variable itself was unused.
         for e := 0; e < epochs; e++ {
                 var totalEpochLoss float32 = 0.0
                 // Create a permutation of indices to shuffle the training data for each epoch
