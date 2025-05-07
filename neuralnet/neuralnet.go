@@ -275,11 +275,11 @@ func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs [
 	}
 }
 
-// Clone a neural network for thread-safe parallel processing
-func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
+// Clone creates a deep copy of a neural network for thread-safe parallel processing.
+func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	// Create a new neural network with the same structure
 	clone := &NeuralNetwork{
-		layers: make([]*Layer, len(original.layers)),
+		layers: make([]*Layer, len(nn.layers)),
 		params: original.params,
 	}
 
@@ -311,10 +311,10 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
 		clone.layers[i] = cloneLayer
 	}
 
-	// Copy input and loss if they exist
-	if original.input != nil {
-		clone.input = make([]float32, len(original.input))
-		copy(clone.input, original.input)
+	// Copy input if it exists
+	if nn.input != nil {
+		clone.input = make([]float32, len(nn.input))
+		copy(clone.input, nn.input)
 	}
 
 	return clone
@@ -439,8 +439,8 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
 						if startIdx >= endIdx { // Double check, no samples for this worker
 							return
 						}
-
-						clone := cloneNeuralNetwork(nn)  // Each worker gets a clone
+						
+						clone := nn.Clone()  // Each worker gets a clone
 						clone.zeroAccumulatedGradients() // Initialize clone's accumulators
 						var currentWorkerLoss float32 = 0.0
 

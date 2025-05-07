@@ -219,14 +219,71 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 	return images, out
 }
 
-func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int) float32 {
-	accuracy := 0
-	for i := from; i < to; i++ {
-		if label(expectedOutputs[i]) == nn.Predict(trainingData[i]) {
-			accuracy++
-		}
+func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int, numWorkers int) float32 {
+	numSamplesToTest := to - from
+	if numSamplesToTest <= 0 {
+		return 0.0
 	}
-	return float32(accuracy) / float32(to-from)
+
+	correctPredictions := 0
+
+	if numWorkers <= 1 || numSamplesToTest < numWorkers { // Fallback to single-threaded if not enough samples or workers=1
+		for i := from; i < to; i++ {
+			// For single-threaded, we can use the original nn directly,
+			// but for consistency and to ensure no accidental shared state issues if nn.Predict were to change,
+			// using a clone is safer, though slightly more overhead.
+			// If performance is critical here for single thread, could use 'nn' directly.
+			// currentNN := nn
+			// For this implementation, let's be consistent with cloning for clarity.
+			currentNN := nn.Clone()
+			if label(expectedOutputs[i]) == currentNN.Predict(trainingData[i]) {
+				correctPredictions++
+			}
+		}
+	} else {
+		var wg sync.WaitGroup
+		mu := &sync.Mutex{} // Mutex to protect access to correctPredictions
+
+		samplesPerWorker := (numSamplesToTest + numWorkers - 1) / numWorkers // Ceiling division
+
+		for w := 0; w < numWorkers; w++ {
+			wg.Add(1)
+			workerStartOffset := w * samplesPerWorker
+			workerEndOffset := workerStartOffset + samplesPerWorker
+			if workerStartOffset >= numSamplesToTest {
+				wg.Done()
+				continue
+			}
+			if workerEndOffset > numSamplesToTest {
+				workerEndOffset = numSamplesToTest
+			}
+
+			// Convert offsets to actual indices in trainingData/expectedOutputs
+			actualWorkerStart := from + workerStartOffset
+			actualWorkerEnd := from + workerEndOffset
+
+			go func(startIdx int, endIdx int) {
+				defer wg.Done()
+				if startIdx >= endIdx {
+					return
+				}
+				
+				workerNN := nn.Clone() // Each worker gets its own clone
+				workerCorrect := 0
+				for i := startIdx; i < endIdx; i++ {
+					if label(expectedOutputs[i]) == workerNN.Predict(trainingData[i]) {
+						workerCorrect++
+					}
+				}
+				mu.Lock()
+				correctPredictions += workerCorrect
+				mu.Unlock()
+			}(actualWorkerStart, actualWorkerEnd)
+		}
+		wg.Wait()
+	}
+
+	return float32(correctPredictions) / float32(numSamplesToTest)
 }
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
@@ -304,8 +361,8 @@ func main() {
 			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
 		}
 		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n",
-			accuracy(nn, inputs, labels, from, to),
-			accuracy(nn, inputs, labels, to, to+((to-from)/train_to_validation)),
+			accuracy(nn, inputs, labels, from, to, numWorkers),
+			accuracy(nn, inputs, labels, to, to+((to-from)/train_to_validation), numWorkers),
 		)
 		fmt.Println()
 	}
