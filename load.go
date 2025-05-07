@@ -407,14 +407,15 @@ var (
     flagL2      = flag.Float64("l2", 1e-4, "L2 regularization factor")
     flagEpochs  = flag.Int("epochs", NumEpochs, "number of epochs")
     flagBatch   = flag.Int("batch", MiniBatchSize, "mini-batch size")
-    flagWorkers = flag.Int("workers", runtime.NumCPU(), "number of workers")
+    flagWorkers   = flag.Int("workers", runtime.NumCPU(), "number of workers")
+    flagSaveModel = flag.String("save", "", "path to save best model during training")
 )
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func runTrainingSession(
-	inputs [][]float32, // Changed type
-	labels [][]float32, // Changed type
-	imgs [][][]float64, // Changed type
+	inputs [][]float32,
+	labels [][]float32,
+	imgs [][][]float64,
 	descr []string,
 	from int,
 	to int,
@@ -425,8 +426,10 @@ func runTrainingSession(
 	initialDecay float32,
 	initialL2 float32,
 	initialMomentum float32,
+	savePath string,
 ) {
 	fmt.Printf("\n--- Starting Training Session (Calculations use float64 internally) ---\n")
+	bestValAcc := float32(0.0)
 
 	// Create Params for this session
 	// NewParamsFull no longer takes useFloat64Calc
@@ -473,10 +476,13 @@ func runTrainingSession(
 			saveImg(imgs, labels, descr, j, pred)
 			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
 		}
-		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n",
-			accuracy(nn, inputs, labels, from, to, numWorkers),
-			accuracy(nn, inputs, labels, to, len(inputs), numWorkers), // Use full remaining data for validation
-		)
+		trainAcc := accuracy(nn, inputs, labels, from, to, numWorkers)
+		valAcc := accuracy(nn, inputs, labels, to, len(inputs), numWorkers) // Use full remaining data for validation
+		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n", trainAcc, valAcc)
+		if savePath != "" && valAcc > bestValAcc {
+			nn.Save(savePath)
+			bestValAcc = valAcc
+		}
 		epochDuration := time.Since(epochStartTime)
 		totalEpochsDuration += epochDuration
 		fmt.Printf("Epoch %d duration: %s\n", i, epochDuration)
@@ -568,7 +574,7 @@ func main() {
 	runTrainingSession(
 		inputs, labels, imgs, descr,
 		from, to, epochs, miniBatchSize, baseNumWorkers,
-		initialLR, initialDecay, initialL2, initialMomentum,
+		initialLR, initialDecay, initialL2, initialMomentum, *flagSaveModel,
 	)
 
 	// End of main function
