@@ -94,85 +94,72 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
         return initialise(inputSize, hidden, outputSize, *params)
 }
 
-func initialise(inputSize int, hidden []int, outputSize int, params Params) *NeuralNetwork {
-        rand.Seed(time.Now().UnixNano())
+func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
+    rand.Seed(time.Now().UnixNano())
 
-        if len(hidden) == 0 {
-                // The current code structure relies on hidden[0] existing for the first layer's size
-                // and subsequent loop iterations. If hidden can be empty, this needs specific handling
-                // (e.g., a network with no hidden layers, or a different loop structure).
-                panic("initialise: hidden layers slice cannot be empty as hidden[0] is accessed")
-        }
+    // Note: To support zero hidden layers (direct input to output), this function
+    // would need adjustments, particularly in how prevLayerNeuronCount is initialized
+    // for the output layer. For now, we assume hiddenConfig is not empty.
+    if len(hiddenConfig) == 0 {
+        panic("initialise: hiddenConfig slice cannot be empty for this network structure.")
+    }
 
-        nn := &NeuralNetwork{
-                // input + hidden + output
-                layers: make([]*Layer, len(hidden) + 2),
-                params: params,
-        }
+    numHiddenLayers := len(hiddenConfig)
+    // Total processing layers = number of hidden layers + 1 output layer
+    nn := &NeuralNetwork{
+        layers: make([]*Layer, numHiddenLayers+1),
+        params: params,
+    }
 
-        first := &Layer{
-                neurons: make([]*Neuron, hidden[0]),
-                activation: ReLU{}, // Changed to ReLU for the first hidden layer
-        }
-        for j := range first.neurons {
-                first.neurons[j] = &Neuron{
-                        weights:  make([]float32, inputSize),
-                        bias:     xavierInit(inputSize, hidden[0], nn.params),
-                        momentum: make([]float32, inputSize),
-                }
-                for k := range first.neurons[j].weights {
-                        first.neurons[j].weights[k] = xavierInit(inputSize, hidden[0], nn.params)
-                }
-        }
-        nn.layers[0] = first
+    // prevLayerNeuronCount tracks the number of neurons in the layer that feeds into the current one.
+    // It starts with inputSize for the first hidden layer.
+    prevLayerNeuronCount := inputSize
 
-        for i, size := range hidden {
-                layer := &Layer{
-                        neurons: make([]*Neuron, size),
-                        activation: ReLU{},
-                }
-                // The 'out' variable is no longer used here.
-                // prevLayerSize and currentLayerSize are used for xavierInit.
-                for j := range layer.neurons {
-                        prevLayerSize := len(nn.layers[i].neurons) // Number of neurons in the previous layer
-                        currentLayerSize := size                   // Number of neurons in the current layer (size)
-                        layer.neurons[j] = &Neuron{
-                                weights: make([]float32, prevLayerSize),
-                                bias:    xavierInit(prevLayerSize, currentLayerSize, nn.params), // Bias for current neuron
-                        }
-                        // TODO: use gauss to init weights
-                        for k := range layer.neurons[j].weights {
-                                // Weights connect previous layer to current layer's neurons
-                                layer.neurons[j].weights[k] =  xavierInit(prevLayerSize, currentLayerSize, nn.params)
-                        }
-                        layer.neurons[j].momentum = make([]float32, prevLayerSize)
-
-                }
-                nn.layers[i + 1] = layer
+    // Create Hidden Layers
+    for i := 0; i < numHiddenLayers; i++ {
+        currentHiddenLayerSize := hiddenConfig[i]
+        hiddenLayer := &Layer{
+            neurons:    make([]*Neuron, currentHiddenLayerSize),
+            activation: ReLU{}, // Default activation for hidden layers
         }
-        output := &Layer{
-                neurons: make([]*Neuron, outputSize),
-                activation: Linear{}, // Changed to Linear activation for the output layer
+        for j := 0; j < currentHiddenLayerSize; j++ {
+            hiddenLayer.neurons[j] = &Neuron{
+                weights:  make([]float32, prevLayerNeuronCount),
+                bias:     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params),
+                momentum: make([]float32, prevLayerNeuronCount),
+            }
+            for k := range hiddenLayer.neurons[j].weights {
+                hiddenLayer.neurons[j].weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params)
+            }
         }
-        for l := 0; l < outputSize; l++ {
-                output.neurons[l] = &Neuron{
-                        weights: make([]float32, len(nn.layers[len(nn.layers) - 2].neurons)),
-                        bias:    0,
-                }
-                // TODO: use gauss to init weights
-                lastHiddenLayerSize := len(nn.layers[len(nn.layers) - 2].neurons)
-                for k := range output.neurons[l].weights {
-                        output.neurons[l].weights[k] = xavierInit(lastHiddenLayerSize, outputSize, nn.params)
-                }
-                output.neurons[l].momentum = make([]float32, lastHiddenLayerSize)
+        nn.layers[i] = hiddenLayer
+        prevLayerNeuronCount = currentHiddenLayerSize // Update for the next layer's input count
+    }
+
+    // Create Output Layer
+    // At this point, prevLayerNeuronCount holds the neuron count of the last hidden layer.
+    outputLayer := &Layer{
+        neurons:    make([]*Neuron, outputSize),
+        activation: Linear{}, // Standard for classification before softmax
+    }
+    for l := 0; l < outputSize; l++ {
+        outputLayer.neurons[l] = &Neuron{
+            weights:  make([]float32, prevLayerNeuronCount),
+            // Output layer biases are often initialized to zero, but using Xavier for consistency with current code.
+            bias:     xavierInit(prevLayerNeuronCount, outputSize, nn.params),
+            momentum: make([]float32, prevLayerNeuronCount),
         }
-        nn.layers[len(hidden) + 1] = output
+        for k := range outputLayer.neurons[l].weights {
+            outputLayer.neurons[l].weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.params)
+        }
+    }
+    // The output layer is the last layer in the nn.layers slice.
+    nn.layers[numHiddenLayers] = outputLayer
 
-
-        return nn
+    return nn
 }
 
-func NewNeuralNetwork(inputSize int, hidden []int, outputSize int, params Params) *NeuralNetwork {
+func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
         return initialise(inputSize, hidden, outputSize, params)
 }
 
