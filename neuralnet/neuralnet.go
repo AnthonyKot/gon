@@ -246,8 +246,8 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	// Create a new neural network with the same structure
 	clone := &NeuralNetwork{
-		layers: make([]*Layer, len(nn.layers)),
-		params: nn.params, // Corrected: use receiver nn
+		Layers: make([]*Layer, len(nn.Layers)),
+		Params: nn.Params,
 	}
 
 	// Deep copy all layers
