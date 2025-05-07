@@ -345,19 +345,6 @@ func (nn *NeuralNetwork) zeroAccumulatedGradients() {
 	}
 }
 
-/*
- Original implementation with potential race conditions.
- TODO: TrainMiniBatchOriginal is marked stub and not currently used.
-*/
-// Note: This function, even with the loss variable fix below, has inherent race conditions
-// if used concurrently because nn.FeedForward and nn.AccumulateLoss modify the shared nn object's
-// internal state from multiple goroutines without proper synchronization for those shared fields.
-// For safe concurrent training, TrainMiniBatchThreadSafe (which uses cloning) is recommended.
-
-/*
-Thread-safe implementation using worker clones.
-TODO: TrainMiniBatchThreadSafe is marked stub and not currently used.
-*/
 
 /*
 TrainMiniBatch processes the training data in mini-batches.
@@ -707,23 +694,6 @@ func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
 	return dense
 }
 
-// The old Backpropagate function has been replaced by the logic within
-// backpropagateAndAccumulateForSample and applyAveragedGradients.
-
-// convertDeltasToDense was used by the old Backpropagate.
-// It might not be needed with the new per-sample delta handling.
-// Kept for now, can be removed if confirmed unused.
-func convertDeltasToDense(layer *Layer, params Params) *mat.VecDense {
-	dense := mat.NewVecDense(len(layer.deltas), nil)
-	for i, d := range layer.deltas {
-		if math.IsNaN(float64(d)) {
-			dense.SetVec(i, float64(params.lowCap))
-		} else {
-			dense.SetVec(i, float64(capValue(d, params)))
-		}
-	}
-	return dense
-}
 
 // stableSoftmax computes softmax in a numerically stable way.
 func stableSoftmax(output []float32) []float32 {
