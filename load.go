@@ -144,7 +144,7 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, pr
 		panic(err)
 	}
 
-	println(fmt.Sprintf("Image saved as %s", fullPath))
+	fmt.Printf("Image saved as %s\n", fullPath) // Use fmt.Printf for consistency
 }
 
 func oneHotEncode(labels []int, numClasses int) []mat.VecDense {

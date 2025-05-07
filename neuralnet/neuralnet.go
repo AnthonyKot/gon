@@ -175,8 +175,7 @@ func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params 
 
 func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 	// Convert input mat.VecDense to []float32 once and store in nn.input.
-	// Reuse nn.input slice if possible to reduce allocations.
-	// nn.input is preallocated in initialise; no need to allocate here
+	// nn.input slice is preallocated in initialise. This loop populates it.
 	for j := 0; j < input.Len(); j++ {
 		nn.input[j] = float32(input.AtVec(j))
 	}
