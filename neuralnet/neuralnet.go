@@ -6,7 +6,6 @@ import (
         "math"
         "time"
         "math/rand"
-        "gonum.org/v1/gonum/diff/fd"
         "gonum.org/v1/gonum/mat"
         "encoding/json"
         "os"
