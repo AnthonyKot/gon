@@ -411,7 +411,6 @@ var (
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func runTrainingSession(
-	// useFloat64Calc bool, // Parameter removed
 	inputs [][]float32, // Changed type
 	labels [][]float32, // Changed type
 	imgs [][][]float64, // Changed type
@@ -419,16 +418,12 @@ func runTrainingSession(
 	from int,
 	to int,
 	epochs int,
-	// trainToValidationRatio int, // Removed parameter
 	miniBatchSize int,
 	baseNumWorkers int,
 	initialLR float32,
 	initialDecay float32,
 	initialL2 float32,
-	// initialLowCap float32, // Removed
-	// initialRelu float32, // Removed
 	initialMomentum float32,
-	// initialBN float32, // Removed
 ) {
 	fmt.Printf("\n--- Starting Training Session (Calculations use float64 internally) ---\n")
 
@@ -578,7 +573,7 @@ func main() {
 	runTrainingSession(
 		inputs, labels, imgs, descr,
 		from, to, epochs, miniBatchSize, baseNumWorkers,
-		initialLR, initialDecay, initialL2, /*initialLowCap,*/ initialMomentum,
+		initialLR, initialDecay, initialL2, initialMomentum,
 	)
 
 	// End of main function
