@@ -208,7 +208,7 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 		for j := 0; j < len(nn.input); j++ { // Iterate over nn.input
 			neuron.output += nn.input[j] * neuron.weights[j] // Use nn.input directly
 		}
-		neuron.output = nn.layers[0].activation.Activate(neuron.output, nn.params.UseFloat64)
+		neuron.output = nn.layers[0].activation.Activate(neuron.output) // Removed UseFloat64 flag
 		neuron.output = capValue(neuron.output, nn.params)
 	}
 	// nn.input is already set.
@@ -218,7 +218,7 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 			for j := 0; j < len(nn.layers[i-1].neurons); j++ {
 				neuron.output += nn.layers[i-1].neurons[j].output * neuron.weights[j]
 			}
-			neuron.output = nn.layers[i].activation.Activate(neuron.output, nn.params.UseFloat64)
+			neuron.output = nn.layers[i].activation.Activate(neuron.output) // Removed UseFloat64 flag
 			neuron.output = capValue(neuron.output, nn.params)
 		}
 	}
@@ -241,18 +241,19 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 				for wIdx := range neuron.weights {
 					avgGrad := neuron.accumulatedWeightGradients[wIdx] / fBatchSize
 
-					// Add L2 regularization gradient component
-					avgGrad += nn.params.L2 * neuron.weights[wIdx]
+					// Add L2 regularization gradient component (using float64 intermediate)
+					avgGrad64 := float64(neuron.accumulatedWeightGradients[wIdx])/float64(fBatchSize) + float64(nn.params.L2)*float64(neuron.weights[wIdx])
 
-					neuron.momentum[wIdx] = nn.params.MomentumCoefficient*neuron.momentum[wIdx] + learningRate*avgGrad
-					neuron.weights[wIdx] -= neuron.momentum[wIdx]
+					momentum64 := float64(nn.params.MomentumCoefficient)*float64(neuron.momentum[wIdx]) + float64(learningRate)*avgGrad64
+					neuron.momentum[wIdx] = float32(momentum64)
+					neuron.weights[wIdx] = float32(float64(neuron.weights[wIdx]) - momentum64) // Update using float64 intermediate
 					neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
 				}
 			}
 
-			// Update bias
-			avgBiasGrad := neuron.accumulatedBiasGradient / fBatchSize
-			neuron.bias -= learningRate * avgBiasGrad
+			// Update bias (using float64 intermediate)
+			avgBiasGrad64 := float64(neuron.accumulatedBiasGradient) / float64(fBatchSize)
+			neuron.bias = float32(float64(neuron.bias) - float64(learningRate)*avgBiasGrad64)
 			neuron.bias = capValue(neuron.bias, nn.params)
 		}
 	}
@@ -555,8 +556,13 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 				errorSumTimesWeight += nextNeuron.weights[j] * nextLayer.deltas[k]
 			}
 			// Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
-			derivative := layer.activation.Derivative(neuron.output, nn.params.UseFloat64) // neuron.output is from current sample's FeedForward
-			layer.deltas[j] = capValue(errorSumTimesWeight*derivative, nn.params)
+			// Use float64 for intermediate sum
+			var errorSumTimesWeight64 float64
+			for k, nextNeuron := range nextLayer.neurons {
+				errorSumTimesWeight64 += float64(nextNeuron.weights[j]) * float64(nextLayer.deltas[k])
+			}
+			derivative := layer.activation.Derivative(neuron.output) // Removed UseFloat64 flag
+			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative)), nn.params)
 		}
 	}
 
@@ -586,8 +592,9 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 			// Accumulate weight gradients: gradient_w = delta_current_neuron * output_prev_layer_neuron
 			if neuron.accumulatedWeightGradients != nil { // Should be initialized by zeroAccumulatedGradients
 				for wIdx := range neuron.weights {
-					gradContribution := sampleDelta * prevLayerOutputs[wIdx]
-					neuron.accumulatedWeightGradients[wIdx] += gradContribution
+					// Use float64 for intermediate calculation
+					gradContrib64 := float64(sampleDelta) * float64(prevLayerOutputs[wIdx])
+					neuron.accumulatedWeightGradients[wIdx] += float32(gradContrib64)
 				}
 			}
 			// Accumulate bias gradient: gradient_b = delta_current_neuron
@@ -679,21 +686,23 @@ func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
 	propsData := props.RawVector().Data
 	targetData := target.RawVector().Data // target is mat.VecDense, so direct RawVector()
 
-	for i := 0; i < len(propsData); i++ { // Use len of the slice
-		p := float32(math.Max(propsData[i], 1e-15))
-		// Cross-entropy: -sum target * log(p)
-		loss -= float32(targetData[i]) * float32(math.Log(float64(p)))
+	// Use float64 for intermediate loss calculation
+	var loss64 float64
+	for i := 0; i < len(propsData); i++ {
+		p64 := math.Max(propsData[i], 1e-15) // propsData is already float64
+		loss64 -= targetData[i] * math.Log(p64) // targetData is already float64
 	}
-	// L2 regularization: (lambda/2) * sum weights^2
-	var reg float32 = 0.0
+	// L2 regularization: (lambda/2) * sum weights^2 (using float64)
+	var reg64 float64 = 0.0
 	for _, layer := range nn.layers {
 		for _, neuron := range layer.neurons {
 			for _, w := range neuron.weights {
-				reg += w * w
+				reg64 += float64(w) * float64(w)
 			}
 		}
 	}
-	loss += 0.5 * nn.params.L2 * reg
+	loss64 += 0.5 * float64(nn.params.L2) * reg64
+	loss = float32(loss64) // Cast final result back to float32
 	// Guard against NaN or Inf
 	if math.IsNaN(float64(loss)) || math.IsInf(float64(loss), 0) {
 		return 0.0
