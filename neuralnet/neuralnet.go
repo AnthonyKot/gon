@@ -22,6 +22,9 @@ type Neuron struct {
         bias    float32
         output  float32
         momentum []float32
+        // Fields for accumulating gradients in batch training
+        accumulatedWeightGradients []float32
+        accumulatedBiasGradient    float32
 }
 
 type Layer struct {
@@ -316,6 +319,23 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
         return clone
 }
 
+func (nn *NeuralNetwork) zeroAccumulatedGradients() {
+        for _, layer := range nn.layers {
+                for _, neuron := range layer.neurons {
+                        // Ensure accumulatedWeightGradients slice is allocated and zeroed
+                        if neuron.accumulatedWeightGradients == nil || len(neuron.accumulatedWeightGradients) != len(neuron.weights) {
+                                neuron.accumulatedWeightGradients = make([]float32, len(neuron.weights))
+                        } else {
+                                for k := range neuron.accumulatedWeightGradients {
+                                        neuron.accumulatedWeightGradients[k] = 0.0
+                                }
+                        }
+                        // Zero out accumulatedBiasGradient
+                        neuron.accumulatedBiasGradient = 0.0
+                }
+        }
+}
+
 /*
  Original implementation with potential race conditions.
  TODO: TrainMiniBatchOriginal is marked stub and not currently used.
@@ -344,25 +364,117 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
         panic("TrainMiniBatch is not implemented; pending refactor")
 }
 
-func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
-        for e := 0; e < epochs; e++ {
-                // learning rate decay moved to end of epoch
-                var loss float32 = 0.0
-                // Prepare error vectors for backpropagation
-                errors := make([]mat.VecDense, len(trainingData))
-                for i := 0; i < len(trainingData); i++ {
-                        nn.FeedForward(trainingData[i])
-                        // Compute error vector: softmax - target
-                        props := nn.calculateProps()
-                        errVec := mat.NewVecDense(props.Len(), nil)
-                        errVec.SubVec(props, &expectedOutputs[i])
-                        errors[i] = *errVec
-                        loss += nn.calculateLoss(expectedOutputs[i])
-                }
-                nn.Backpropagate(errors)
-                fmt.Println(fmt.Sprintf("Loss Batch %d = %.2f", e, loss / float32(len(trainingData))))
-                nn.params.lr = nn.params.lr * nn.params.decay
+// backpropagateAndAccumulateForSample performs feedforward, calculates loss,
+// computes sample-specific deltas, and accumulates gradients for a single sample.
+// It returns the loss for this sample.
+func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecDense, labelSample mat.VecDense) float32 {
+    // 1. FeedForward for the current sample
+    nn.FeedForward(dataSample)
+
+    // 2. Calculate error vector for this sample (softmax_output - target)
+    props := nn.calculateProps() // Uses current nn.output (from dataSample's FeedForward)
+    errVec := mat.NewVecDense(props.Len(), nil)
+    errVec.SubVec(props, &labelSample)
+    
+    loss := nn.calculateLoss(labelSample) // Uses current nn.output
+
+    // 3. Backpropagate error for THIS sample to get sample-specific deltas.
+    //    These deltas are stored in layer.deltas.
+
+    // Calculate deltas for the output layer
+    outputLayer := nn.layers[len(nn.layers)-1]
+    if outputLayer.deltas == nil || len(outputLayer.deltas) != len(outputLayer.neurons) {
+        outputLayer.deltas = make([]float32, len(outputLayer.neurons))
+    }
+    for j := 0; j < len(outputLayer.neurons); j++ {
+        // For a single sample, the delta is the error component (softmax_output - target_j).
+        outputLayer.deltas[j] = capValue(float32(errVec.AtVec(j)), nn.params)
+    }
+
+    // Propagate deltas backward through hidden layers
+    for i := len(nn.layers) - 2; i >= 0; i-- {
+        layer := nn.layers[i]
+        nextLayer := nn.layers[i+1]
+        
+        if layer.deltas == nil || len(layer.deltas) != len(layer.neurons) {
+            layer.deltas = make([]float32, len(layer.neurons))
         }
+
+        for j, neuron := range layer.neurons { // For each neuron 'j' in current layer 'i'
+            var errorSumTimesWeight float32 = 0.0
+            // Sum (delta_k_nextLayer * weight_kj_nextLayer)
+            for k, nextNeuron := range nextLayer.neurons { // For each neuron 'k' in next layer 'i+1'
+                 // nextNeuron.weights[j] is the weight connecting neuron 'j' (current layer) to neuron 'k' (next layer)
+                errorSumTimesWeight += nextNeuron.weights[j] * nextLayer.deltas[k]
+            }
+            // Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
+            derivative := layer.activation.Derivative(neuron.output) // neuron.output is from current sample's FeedForward
+            layer.deltas[j] = capValue(errorSumTimesWeight * derivative, nn.params)
+        }
+    }
+
+    // 4. Accumulate gradients based on these sample-specific deltas and current activations
+    //    (nn.input and neuron.output are from the current sample's FeedForward pass).
+    for layerIndex, layer := range nn.layers {
+        var prevLayerOutputs []float32
+        if layerIndex == 0 {
+            prevLayerOutputs = nn.input // Activations from input layer (i.e., the input sample itself)
+        } else {
+            prevLayer := nn.layers[layerIndex-1]
+            prevLayerOutputs = make([]float32, len(prevLayer.neurons))
+            for pIdx, pNeuron := range prevLayer.neurons {
+                prevLayerOutputs[pIdx] = pNeuron.output // Activations from the previous layer
+            }
+        }
+
+        for nIdx, neuron := range layer.neurons { // For neuron 'nIdx' in current 'layer'
+            sampleDelta := layer.deltas[nIdx] // Delta for this neuron, for this sample
+            
+            // Accumulate weight gradients: gradient_w = delta_current_neuron * output_prev_layer_neuron
+            if neuron.accumulatedWeightGradients != nil { // Should be initialized by zeroAccumulatedGradients
+                for wIdx := range neuron.weights {
+                    gradContribution := sampleDelta * prevLayerOutputs[wIdx]
+                    neuron.accumulatedWeightGradients[wIdx] += gradContribution
+                }
+            }
+            // Accumulate bias gradient: gradient_b = delta_current_neuron
+            neuron.accumulatedBiasGradient += sampleDelta
+        }
+    }
+    return loss
+}
+
+func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, epochs int) {
+    numSamples := len(trainingData)
+    if numSamples == 0 {
+        fmt.Println("TrainBatch: No training data provided.")
+        return
+    }
+
+    for e := 0; e < epochs; e++ {
+        nn.zeroAccumulatedGradients() // Zero out accumulators at the start of each epoch
+        var totalEpochLoss float32 = 0.0
+
+        // Shuffle data for each epoch
+        permutation := rand.Perm(numSamples)
+
+        for _, idx := range permutation { // Iterate through shuffled samples
+            dataSample := trainingData[idx]
+            labelSample := expectedOutputs[idx]
+            
+            sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
+            totalEpochLoss += sampleLoss
+        }
+
+        // After processing all samples in the batch, apply the averaged gradients
+        nn.applyAveragedGradients(numSamples, nn.params.lr)
+        
+        averageLoss := totalEpochLoss / float32(numSamples)
+        fmt.Printf("Loss Batch %d = %.2f\n", e, averageLoss)
+        
+        // Apply learning rate decay
+        nn.params.lr *= nn.params.decay
+    }
 }
 
 func (nn *NeuralNetwork) Output() []float32 {
@@ -453,103 +565,12 @@ func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
         return dense
 }
 
-func (nn *NeuralNetwork) Backpropagate(errors []mat.VecDense) {
-        outputLayer := nn.layers[len(nn.layers) - 1]
-        outputLayer.deltas = make([]float32, len(outputLayer.neurons))
+// The old Backpropagate function has been replaced by the logic within
+// backpropagateAndAccumulateForSample and applyAveragedGradients.
 
-        // average (softmax - target) across the batch
-        batchSize := float32(len(errors))
-        for j := 0; j < len(outputLayer.neurons); j++ {
-                var sumErr float32
-                for _, errVec := range errors {
-                        sumErr += float32(errVec.AtVec(j))
-                }
-                outputLayer.deltas[j] = capValue(sumErr/batchSize, nn.params)
-        }
-
-        for i := len(nn.layers) - 2; i >= 0; i-- {
-                // M neurons neurons to calculate deltas for    
-                layer := nn.layers[i]
-                m := len(layer.neurons)
-                // N neurons to propagate error from
-                nextLayer := nn.layers[i + 1]
-                n := len(nextLayer.neurons)
-
-                // N * M
-                weights := convertWeightsDense(nextLayer.neurons)
-
-                input := make([]float64, m)
-                for i, neuron := range layer.neurons {
-                        input[i] = float64(neuron.output)
-                }
-
-                jac := mat.NewDense(n, m, nil)
-                if (nn.params.jacobian) {
-                        // N * 1
-                        bias := convertBiasToDense(nextLayer.neurons)
-                        // jac is delta(ActicatonN)/delta(OutputM)
-                        fd.Jacobian(jac,
-                                func(next, prev []float64) {
-                                        var nextLayerOutputs mat.VecDense
-                                        nextLayerOutputs.MulVec(weights, mat.NewVecDense(m, prev))
-                                        nextLayerOutputs.AddVec(bias, &nextLayerOutputs)
-                                        for i, _ := range next {
-                                                next[i] = nextLayerOutputs.AtVec(i)
-                                        }
-                                },
-                                input,
-                                &fd.JacobianSettings{
-                                        Formula:    fd.Central,
-                                        // Concurrent: true ?
-                                        Concurrent: false,
-                                })
-                } else {
-                        jac = weights
-                }
-
-                // [M * N] x [N * 1] => [M * 1]
-                var activationDelta mat.VecDense
-                // Safely compute matrix multiplication with NaN checking
-                nextLayerDeltas := convertDeltasToDense(nextLayer, nn.params)
-                
-                // Check if any deltas are NaN
-                hasNaN := false
-                for i := 0; i < nextLayerDeltas.Len(); i++ {
-                        if math.IsNaN(nextLayerDeltas.AtVec(i)) {
-                                hasNaN = true
-                                break
-                        }
-                }
-                
-                if hasNaN {
-                        // Use zeros instead of NaN values
-                        activationDelta = *mat.NewVecDense(m, nil)
-                } else {
-                        activationDelta.MulVec(jac.T(), nextLayerDeltas)
-                }
-                
-                deltas := mat.NewVecDense(activationDelta.Len(), nil)
-                for i := 0; i < activationDelta.Len(); i++ {
-                        delta := capValue(float32(activationDelta.AtVec(i)), nn.params)
-                        derivative := capValue(layer.activation.Derivative(float32(input[i])), nn.params)
-                        // Protect against NaN in the multiplication
-                        result := delta * derivative
-                        if math.IsNaN(float64(result)) {
-                                result = 0.0
-                        }
-                        deltas.SetVec(i, float64(result))
-                }
-
-                layer.deltas = make([]float32, m)
-                for i, _ := range layer.deltas {
-                        layer.deltas[i] = float32(deltas.AtVec(i))
-                        layer.deltas[i] = capValue(layer.deltas[i], nn.params)
-                }
-        }
-        // TODO can be changed in real time based on schedule
-        nn.UpdateWeights(nn.params.lr)
-}
-
+// convertDeltasToDense was used by the old Backpropagate.
+// It might not be needed with the new per-sample delta handling.
+// Kept for now, can be removed if confirmed unused.
 func convertDeltasToDense(layer *Layer, params Params) *mat.VecDense {
         dense := mat.NewVecDense(len(layer.deltas), nil)
         for i, d := range layer.deltas {
