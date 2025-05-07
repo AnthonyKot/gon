@@ -22,6 +22,12 @@ go build -o gon
 # Load a saved best model and evaluate
 ./gon -load=best_model.json
 ```
+## Testing
+To run unit tests for the neural network package:
+```bash
+go test ./neuralnet
+```
+
 Flags:
 - `-lr`: Learning rate (default: 0.01)
 - `-decay`: Learning rate decay factor per epoch (default: 0.95)
