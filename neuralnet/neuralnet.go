@@ -128,10 +128,13 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 		for j := 0; j < currentHiddenLayerSize; j++ {
 			hiddenLayer.neurons[j] = &Neuron{
 				weights:  make([]float32, prevLayerNeuronCount),
+				// Initialize bias using Xavier/Glorot initialization.
 				bias:     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params),
+				// Initialize momentum buffer (used for SGD with momentum).
 				momentum: make([]float32, prevLayerNeuronCount),
 			}
-			// TODO: use gauss to init weights - This comment is outdated, Xavier is used.
+			// Initialize weights using Xavier/Glorot initialization.
+			// Helps prevent vanishing/exploding gradients during initial training phases.
 			for k := range hiddenLayer.neurons[j].weights {
 				hiddenLayer.neurons[j].weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params)
 			}
@@ -150,10 +153,12 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 		outputLayer.neurons[l] = &Neuron{
 			weights: make([]float32, prevLayerNeuronCount),
 			// Output layer biases are often initialized to zero, but using Xavier for consistency with current code.
+			// Initialize bias using Xavier/Glorot initialization.
 			bias:     xavierInit(prevLayerNeuronCount, outputSize, nn.params),
+			// Initialize momentum buffer.
 			momentum: make([]float32, prevLayerNeuronCount),
 		}
-		// TODO: use gauss to init weights - This comment is outdated, Xavier is used.
+		// Initialize weights using Xavier/Glorot initialization.
 		for k := range outputLayer.neurons[l].weights {
 			outputLayer.neurons[l].weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.params)
 		}
@@ -242,7 +247,10 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 
 // TrainSGD function removed as unused in the current main application flow.
 
-// Clone creates a deep copy of a neural network for thread-safe parallel processing.
+// Clone creates a deep copy of a neural network. This is crucial for thread-safe parallel processing
+// during mini-batch training or parallel accuracy calculation, as each worker goroutine needs
+// its own independent copy of the network state to avoid race conditions during FeedForward
+// and gradient accumulation.
 func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	// Create a new neural network with the same structure
 	clone := &NeuralNetwork{
@@ -469,12 +477,13 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 		errVecData[i] = props[i] - float64(labelSample[i]) // Manual subtraction
 	}
 
-	loss := nn.calculateLoss(labelSample) // Uses current nn.output
+	loss := nn.calculateLoss(labelSample) // Calculate loss for this sample
 
-	// 3. Backpropagate error for THIS sample to get sample-specific deltas.
-	//    These deltas are stored in layer.deltas.
+	// 3. Backpropagate Deltas: Calculate error signals (deltas) for each layer, starting from the output.
+	//    The delta for a neuron represents how much its pre-activation input needs to change
+	//    to reduce the overall loss.
 
-	// Calculate deltas for the output layer
+	// Calculate deltas for the output layer (using the simplified gradient)
 	outputLayer := nn.layers[len(nn.layers)-1]
 	if outputLayer.deltas == nil || len(outputLayer.deltas) != len(outputLayer.neurons) {
 		outputLayer.deltas = make([]float32, len(outputLayer.neurons))
@@ -607,9 +616,9 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is 
 	}
 	for i := 0; i < len(propsData); i++ {
 		p64 := math.Max(propsData[i], 1e-15)
-		loss64 -= float64(target[i]) * math.Log(p64) // Use target[i] directly
+		loss64 -= float64(target[i]) * math.Log(p64)
 	}
-	// L2 regularization: (lambda/2) * sum weights^2 (using float64)
+	// Calculate L2 regularization part
 	var reg64 float64 = 0.0
 	for _, layer := range nn.layers {
 		for _, neuron := range layer.neurons {

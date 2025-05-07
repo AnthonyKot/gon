@@ -249,16 +249,12 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOut
 
 	correctPredictions := 0
 
-	if numWorkers <= 1 || numSamplesToTest < numWorkers { // Fallback to single-threaded if not enough samples or workers=1
+	if numWorkers <= 1 || numSamplesToTest < numWorkers { // Fallback to single-threaded
 		for i := from; i < to; i++ {
-			// For single-threaded, we can use the original nn directly,
-			// but for consistency and to ensure no accidental shared state issues if nn.Predict were to change,
-			// using a clone is safer, though slightly more overhead.
-			// If performance is critical here for single thread, could use 'nn' directly.
-			// currentNN := nn
-			// For this implementation, let's be consistent with cloning for clarity.
+			// Use a clone even for single-threaded case for consistency and safety,
+			// as Predict->FeedForward modifies internal network state (neuron outputs).
 			currentNN := nn.Clone()
-			if label(expectedOutputs[i]) == currentNN.Predict(trainingData[i]) {
+			if label(allLabels[i]) == currentNN.Predict(allInputs[i]) {
 				correctPredictions++
 			}
 		}
@@ -366,6 +362,7 @@ func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, allInputs []
 
 				for i := startIdx; i < endIdx; i++ {
 					trueLabelIdx := label(allLabels[i])
+					// Predict modifies the clone's internal state (neuron outputs) via FeedForward.
 					predLabelIdx := workerNN.Predict(allInputs[i])
 
 					if trueLabelIdx >= 0 && trueLabelIdx < NumClasses {
@@ -441,10 +438,9 @@ func runTrainingSession(
 		initialMomentum,
 	)
 
-	// Use NumClasses constant and derive input size (D*D)
+	// Use NumClasses constant and derive input size (D*D = 32*32 = 1024 for grayscale)
 	inputSize := D * D
 	nn := neuralnet.NewNeuralNetwork(inputSize, []int{512, 256}, NumClasses, currentParams)
-	// Note: Optimizer/Loss logic is currently internal to training/loss functions.
 
 	j := 0 // Used for saving sample images
 	numWorkers := baseNumWorkers
