@@ -303,7 +303,7 @@ func accuracy(nn *neuralnet.NeuralNetwork, allInputs [][]float32, allLabels [][]
 				workerNN := nn.Clone() // Each worker gets its own clone
 				workerCorrect := 0
 				for i := startIdx; i < endIdx; i++ {
-					if label(expectedOutputs[i]) == workerNN.Predict(trainingData[i]) {
+					if label(allLabels[i]) == workerNN.Predict(allInputs[i]) {
 						workerCorrect++
 					}
 				}
