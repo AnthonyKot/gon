@@ -468,7 +468,7 @@ func main() {
 	runTrainingSession(
 		inputs, labels, imgs, descr,
 		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
-		initialLR, initialDecay, initialL2, initialLowCap, /*initialRelu,*/ initialMomentum, /*initialBN,*/
+		initialLR, initialDecay, initialL2, initialLowCap, initialMomentum,
 	)
 
 	// End of main function
