@@ -324,7 +324,10 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
         return clone
 }
 
-// Original implementation with potential race conditions.
+/*
+ Original implementation with potential race conditions.
+ TODO: TrainMiniBatchOriginal is marked stub and not currently used.
+*/
 // Note: This function, even with the loss variable fix below, has inherent race conditions
 // if used concurrently because nn.FeedForward and nn.AccumulateLoss modify the shared nn object's
 // internal state from multiple goroutines without proper synchronization for those shared fields.
@@ -383,7 +386,10 @@ func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, exp
         }
 }
 
-// Thread-safe implementation using worker clones
+/*
+ Thread-safe implementation using worker clones.
+ TODO: TrainMiniBatchThreadSafe is marked stub and not currently used.
+*/
 func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
         for e := 0; e < epochs; e++ {
                 var totalLoss float32 = 0.0
@@ -474,9 +480,12 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
         }
 }
 
-// Wrapper function that decides which implementation to use
+/*
+ TrainMiniBatch wrapper is currently stubbed pending refactor.
+ Direct use of minibatch training is disabled.
+*/
 func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-        nn.TrainMiniBatchThreadSafe(trainingData, expectedOutputs, batchRatio, epochs)
+        panic("TrainMiniBatch is not implemented; pending refactor")
 }
 
 func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
