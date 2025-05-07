@@ -249,6 +249,7 @@ func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
                 neuron.bias -= learningRate * currentLayer.deltas[j] // Bias momentum can also be added if desired
             }
         }
+}
 
 func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
         batchSize := 1 // Standard SGD processes one sample at a time
