@@ -6,6 +6,7 @@ import (
         "math"
         "time"
         "math/rand"
+        "sync" // Added for multi-threading
         "gonum.org/v1/gonum/mat"
         "encoding/json"
         "os"
@@ -364,8 +365,9 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
  - expectedOutputs: The corresponding target labels.
  - batchSize: The number of samples in each mini-batch.
  - epochs: The total number of times to iterate over the entire dataset.
+ - numWorkers: The number of goroutines to use for processing samples within a mini-batch. If <= 1, runs single-threaded.
 */
-func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchSize int, epochs int) {
+func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchSize int, epochs int, numWorkers int) {
     numSamples := len(trainingData)
     if numSamples == 0 {
         fmt.Println("TrainMiniBatch: No training data provided.")
@@ -404,15 +406,81 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
             nn.zeroAccumulatedGradients() // Zero out accumulators for the new mini-batch
             var miniBatchLoss float32 = 0.0
 
-            for j := i; j < end; j++ { // Process samples in the current mini-batch
-                dataSample := shuffledTrainingData[j]
-                labelSample := shuffledExpectedOutputs[j]
-                
-                sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
-                miniBatchLoss += sampleLoss
+            if numWorkers <= 1 {
+                // Single-threaded processing for the mini-batch
+                for j := i; j < end; j++ {
+                    dataSample := shuffledTrainingData[j]
+                    labelSample := shuffledExpectedOutputs[j]
+                    sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
+                    miniBatchLoss += sampleLoss
+                }
+            } else {
+                // Multi-threaded processing for the mini-batch
+                var wg sync.WaitGroup
+                workerLosses := make([]float32, numWorkers)
+                workerClones := make([]*NeuralNetwork, numWorkers)
+                samplesPerWorker := (currentMiniBatchSize + numWorkers - 1) / numWorkers // Ceiling division
+
+                for w := 0; w < numWorkers; w++ {
+                    wg.Add(1)
+                    workerStart := i + w*samplesPerWorker
+                    workerEnd := workerStart + samplesPerWorker
+                    if workerStart >= end { // No samples for this worker
+                        wg.Done()
+                        continue
+                    }
+                    if workerEnd > end {
+                        workerEnd = end
+                    }
+
+                    go func(workerID int, startIdx int, endIdx int) {
+                        defer wg.Done()
+                        if startIdx >= endIdx { // Double check, no samples for this worker
+                            return
+                        }
+                        
+                        clone := cloneNeuralNetwork(nn) // Each worker gets a clone
+                        clone.zeroAccumulatedGradients() // Initialize clone's accumulators
+                        var currentWorkerLoss float32 = 0.0
+
+                        for k := startIdx; k < endIdx; k++ {
+                            dataSample := shuffledTrainingData[k]
+                            labelSample := shuffledExpectedOutputs[k]
+                            sampleLoss := clone.backpropagateAndAccumulateForSample(dataSample, labelSample)
+                            currentWorkerLoss += sampleLoss
+                        }
+                        workerLosses[workerID] = currentWorkerLoss
+                        workerClones[workerID] = clone
+                    }(w, workerStart, workerEnd)
+                }
+                wg.Wait()
+
+                // Aggregate losses from workers
+                for _, l := range workerLosses {
+                    miniBatchLoss += l
+                }
+
+                // Aggregate gradients from worker clones into the main network's accumulators
+                // The main network's accumulators were zeroed by nn.zeroAccumulatedGradients()
+                for _, clone := range workerClones {
+                    if clone == nil { // Can happen if a worker had no samples
+                        continue
+                    }
+                    for layerIdx, cloneLayer := range clone.layers {
+                        for neuronIdx, cloneNeuron := range cloneLayer.neurons {
+                            mainNeuron := nn.layers[layerIdx].neurons[neuronIdx]
+                            if cloneNeuron.accumulatedWeightGradients != nil {
+                                for wIdx, grad := range cloneNeuron.accumulatedWeightGradients {
+                                    mainNeuron.accumulatedWeightGradients[wIdx] += grad
+                                }
+                            }
+                            mainNeuron.accumulatedBiasGradient += cloneNeuron.accumulatedBiasGradient
+                        }
+                    }
+                }
             }
 
-            // After processing all samples in the mini-batch, apply the averaged gradients
+            // After processing all samples in the mini-batch (either single or multi-threaded), apply the averaged gradients
             nn.applyAveragedGradients(currentMiniBatchSize, nn.params.lr)
             
             totalEpochLoss += miniBatchLoss

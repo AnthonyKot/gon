@@ -287,9 +287,13 @@ func main() {
 
 	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
 	j := 0
+	numWorkers := runtime.NumCPU() // Use number of available CPUs for workers
+	fmt.Printf("Number of workers for mini-batch processing: %d\n", numWorkers)
+	fmt.Println("---")
+
 	for i := 0; i < epochs; i++ {
-		// Switched to TrainMiniBatch
-		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1)
+		// Switched to TrainMiniBatch, now with numWorkers
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
 		for sample := 0; sample < 3; sample++ {
 			j = to + rand.Intn((to - from) / train_to_validation)
 			pred := nn.Predict(inputs[j])
