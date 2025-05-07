@@ -234,6 +234,7 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expected
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func main() {
+    runtime.GOMAXPROCS(runtime.NumCPU())
     flag.Parse()
     if *cpuprofile != "" {
         f, _ := os.Create(*cpuprofile)
