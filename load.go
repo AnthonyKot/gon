@@ -449,10 +449,10 @@ func main() {
 	// Calculate training set size based on ratio
 	trainingSetSize := int(float64(datasetSize) * TrainSplitRatio)
 	to := trainingSetSize // 'to' is the end index (exclusive) for training data
-	epochs := NumEpochs
+	epochs := *flagEpochs
 
 	validationSetSize := datasetSize - trainingSetSize // Use remaining data for validation
-	miniBatchSize := MiniBatchSize
+	miniBatchSize := *flagBatch
 	fmt.Printf("Training set size: %d samples\n", trainingSetSize)
 	fmt.Printf("Validation set size: %d samples\n", validationSetSize)
 	fmt.Printf("Number of main epochs: %d\n", epochs)
@@ -477,7 +477,7 @@ func main() {
 	initialLowCap := float32(0.0)
 	initialMomentum := float32(0.9)
 
-	baseNumWorkers := runtime.NumCPU() // Use number of available CPUs for workers
+	baseNumWorkers := *flagWorkers // Use number of workers from command-line flag
 
 	// Run a single training session (UseFloat64 flag is now removed)
 	runTrainingSession(
