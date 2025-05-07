@@ -330,7 +330,6 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
 func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
         panic("TrainMiniBatchOriginal not implemented")
 }
-                var loss float32 = 0.0
                 var lossMutex sync.Mutex
                 start := time.Now()
                 for i := 0; i < batchRatio; i++ {
@@ -389,7 +388,6 @@ func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, exp
 func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
         panic("TrainMiniBatchThreadSafe not implemented")
 }
-                var totalLoss float32 = 0.0
                 var totalLossMutex sync.Mutex
                 start := time.Now()
                 
