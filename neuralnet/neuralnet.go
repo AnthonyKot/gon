@@ -353,17 +353,11 @@ func (nn *NeuralNetwork) zeroAccumulatedGradients() {
 // if used concurrently because nn.FeedForward and nn.AccumulateLoss modify the shared nn object's
 // internal state from multiple goroutines without proper synchronization for those shared fields.
 // For safe concurrent training, TrainMiniBatchThreadSafe (which uses cloning) is recommended.
-func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-	panic("TrainMiniBatchOriginal not implemented")
-}
 
 /*
 Thread-safe implementation using worker clones.
 TODO: TrainMiniBatchThreadSafe is marked stub and not currently used.
 */
-func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-	panic("TrainMiniBatchThreadSafe not implemented")
-}
 
 /*
 TrainMiniBatch processes the training data in mini-batches.

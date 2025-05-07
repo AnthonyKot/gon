@@ -1,3 +1,4 @@
+– // Package main loads CIFAR-10 data, trains a simple neural network, and evaluates accuracy.
 package main
 
 import (
