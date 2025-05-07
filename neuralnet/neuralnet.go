@@ -760,7 +760,7 @@ func (nn *NeuralNetwork) Save(filename string) {
 	}
 	fmt.Printf("Model saved as %s\n", filename) // Use fmt.Printf for consistency
 }
-func loadModel(filename string) *NeuralNetwork {
+func LoadModel(filename string) *NeuralNetwork {
 	file, err := os.Open(filename)
 	if err != nil {
 		panic(err)

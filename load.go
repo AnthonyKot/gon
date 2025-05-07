@@ -420,6 +420,7 @@ var (
     flagBatch   = flag.Int("batch", MiniBatchSize, "mini-batch size")
     flagWorkers   = flag.Int("workers", runtime.NumCPU(), "number of workers")
     flagSaveModel = flag.String("save", "", "path to save best model during training")
+    flagLoadModel = flag.String("load", "", "path to load saved (best) model for evaluation")
 )
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
@@ -524,6 +525,20 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
+	}
+	if *flagLoadModel != "" {
+		nn := neuralnet.LoadModel(*flagLoadModel)
+		imgs, labels := load()
+		descr := readLabels()
+		inputs := convertImagesToInputs(imgs)
+		numWorkers := *flagWorkers
+		if numWorkers > neuralnet.MAX_WORKERS {
+			numWorkers = neuralnet.MAX_WORKERS
+		}
+		totalAcc := accuracy(nn, inputs, labels, 0, len(inputs), numWorkers)
+		fmt.Printf("Overall accuracy: %.2f\n", totalAcc)
+		calculateAndPrintPerClassAccuracy(nn, inputs, labels, 0, len(inputs), numWorkers, descr)
+		return
 	}
 	imgs, labels := load()
 	descr := readLabels()
