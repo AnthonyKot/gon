@@ -288,13 +288,18 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
                 // Deep copy all neurons
                 for j, neuron := range layer.neurons {
                         cloneNeuron := &Neuron{
-                                weights: make([]float32, len(neuron.weights)),
-                                bias:    neuron.bias,
-                                output:  neuron.output,
+                                weights:  make([]float32, len(neuron.weights)),
+                                bias:     neuron.bias,
+                                output:   neuron.output,
+                                momentum: make([]float32, len(neuron.momentum)), // Initialize momentum slice
                         }
                         
                         // Copy weights
                         copy(cloneNeuron.weights, neuron.weights)
+                        // Copy momentum
+                        if neuron.momentum != nil { // Guard against nil if original momentum could be nil (though init suggests it won't be)
+                            copy(cloneNeuron.momentum, neuron.momentum)
+                        }
                         cloneLayer.neurons[j] = cloneNeuron
                 }
                 
@@ -315,10 +320,15 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
         return clone
 }
 
-// Original implementation with potential race conditions
+// Original implementation with potential race conditions.
+// Note: This function, even with the loss variable fix below, has inherent race conditions
+// if used concurrently because nn.FeedForward and nn.AccumulateLoss modify the shared nn object's
+// internal state from multiple goroutines without proper synchronization for those shared fields.
+// For safe concurrent training, TrainMiniBatchThreadSafe (which uses cloning) is recommended.
 func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
         for e := 0; e < epochs; e++ {
                 var loss float32 = 0.0
+                var lossMutex sync.Mutex
                 start := time.Now()
                 for i := 0; i < batchRatio; i++ {
                         currentData := trainingData[i : int((i + 1) * len(trainingData) / batchRatio)]
@@ -342,14 +352,21 @@ func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, exp
                                         for _, w := range(work) {
                                                 nn.FeedForward(w.data)
                                                 nn.AccumulateLoss(w.output)
-                                                loss += nn.calculateLoss(w.output)
+                                                
+                                                // Safely update shared loss
+                                                batchItemLoss := nn.calculateLoss(w.output)
+                                                lossMutex.Lock()
+                                                loss += batchItemLoss
+                                                lossMutex.Unlock()
                                         }
                                 }(task)
                         }
                         wg.Wait()
                         nn.Backpropagate(len(currentData))
-                        nn.params.lr = nn.params.lr * nn.params.decay
+                        // Learning rate decay was here, moved to end of epoch
                 }
+                // Apply learning rate decay once per epoch
+                nn.params.lr = nn.params.lr * nn.params.decay
                 fmt.Printf("Time elapsed: %s\n", time.Since(start))
                 fmt.Println(fmt.Sprintf("Loss MB %d = %.2f", e, loss / float32(len(trainingData))))
         }
@@ -432,9 +449,11 @@ func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, e
                         
                         // Do single backpropagation with accumulated loss from all workers
                         nn.Backpropagate(len(currentData))
-                        nn.params.lr = nn.params.lr * nn.params.decay
+                        // Learning rate decay was here, moved to end of epoch
                 }
                 
+                // Apply learning rate decay once per epoch
+                nn.params.lr = nn.params.lr * nn.params.decay
                 fmt.Printf("Time elapsed: %s\n", time.Since(start))
                 fmt.Println(fmt.Sprintf("Loss MB %d = %.2f", e, totalLoss / float32(len(trainingData))))
         }
