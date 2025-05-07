@@ -664,10 +664,15 @@ func (nn *NeuralNetwork) calculateProps() *mat.VecDense {
 func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
 	props := nn.calculateProps()
 	var loss float32 = 0.0
-	for i := 0; i < props.Len(); i++ {
-		p := float32(math.Max(props.AtVec(i), 1e-15))
+
+	// Optimization: Access raw vector data to avoid repeated AtVec calls
+	propsData := props.RawVector().Data
+	targetData := target.RawVector().Data // target is mat.VecDense, so direct RawVector()
+
+	for i := 0; i < len(propsData); i++ { // Use len of the slice
+		p := float32(math.Max(propsData[i], 1e-15))
 		// Cross-entropy: -sum target * log(p)
-		loss -= float32(target.AtVec(i)) * float32(math.Log(float64(p)))
+		loss -= float32(targetData[i]) * float32(math.Log(float64(p)))
 	}
 	// L2 regularization: (lambda/2) * sum weights^2
 	var reg float32 = 0.0
