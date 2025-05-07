@@ -112,7 +112,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
         for j := range first.neurons {
                 first.neurons[j] = &Neuron{
                         weights:  make([]float32, inputSize),
-                        bias:     0,
+                        bias:     xavierInit(inputSize, hidden[0], nn.params),
                         momentum: make([]float32, inputSize),
                 }
                 for k := range first.neurons[j].weights {
@@ -135,7 +135,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                 for j := range layer.neurons {
                         layer.neurons[j] = &Neuron{
                                 weights: make([]float32, len(nn.layers[i].neurons)),
-                                bias:    0,
+                                bias:    xavierInit(len(nn.layers[i].neurons), out, nn.params),
                         }
                         // TODO: use gauss to init weights
                         for k := range layer.neurons[j].weights {
@@ -153,7 +153,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
         for l := 0; l < outputSize; l++ {
                 output.neurons[l] = &Neuron{
                         weights: make([]float32, len(nn.layers[len(nn.layers) - 2].neurons)),
-                        bias:    0,
+                        bias:    xavierInit(len(nn.layers[len(nn.layers) - 2].neurons), outputSize, nn.params),
                 }
                 // TODO: use gauss to init weights
                 for k := range output.neurons[l].weights {
