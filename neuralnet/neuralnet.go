@@ -439,8 +439,8 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOut
 						if startIdx >= endIdx { // Double check, no samples for this worker
 							return
 						}
-						
-						clone := nn.Clone()  // Each worker gets a clone
+
+						clone := nn.Clone()              // Each worker gets a clone
 						clone.zeroAccumulatedGradients() // Initialize clone's accumulators
 						var currentWorkerLoss float32 = 0.0
 
@@ -850,7 +850,6 @@ func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, 
 	}
 	return selectedInputs, selectedLabels
 }
-
 
 func (nn *NeuralNetwork) Save(filename string) {
 	file, err := os.Create(filename)
