@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"sync" // Added for multi-threading in accuracy calculation
 
 	"flag"
 	"runtime"
@@ -89,7 +90,7 @@ func readLabels() []string {
 }
 
 func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, predIdx int) {
-	t := ts[i]
+	t := ts[sampleIdx] // Corrected: use sampleIdx instead of undefined i
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 32; x++ {
