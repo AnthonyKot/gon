@@ -131,12 +131,8 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                         neurons: make([]*Neuron, size),
                         activation: ReLU{},
                 }
-                out := 0
-                if i < len(hidden) - 1 {
-                        out = hidden[i + 1]
-                } else {
-                        out = outputSize
-                }
+                // The 'out' variable is no longer used here.
+                // prevLayerSize and currentLayerSize are used for xavierInit.
                 for j := range layer.neurons {
                         prevLayerSize := len(nn.layers[i].neurons) // Number of neurons in the previous layer
                         currentLayerSize := size                   // Number of neurons in the current layer (size)
