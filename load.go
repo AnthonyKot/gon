@@ -425,7 +425,7 @@ func runTrainingSession(
 	initialLR float32,
 	initialDecay float32,
 	initialL2 float32,
-	initialLowCap float32,
+	// initialLowCap float32, // Removed
 	// initialRelu float32, // Removed
 	initialMomentum float32,
 	// initialBN float32, // Removed
