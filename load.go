@@ -255,7 +255,7 @@ func main() {
 	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
 	j := 0
 	for i := 0; i < epochs; i++ {
-		nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
+		nn.TrainBatch(inputs[from:to], labels[from:to], 1)
 		j = to + rand.Intn((to - from) / train_to_validation)
 		saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
 		fmt.Println(nn.Output())
