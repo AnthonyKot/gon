@@ -62,24 +62,21 @@ func NewParams(learningRate float32, decay float32, regularization float32) Para
 }
 
 // NewParamsFull creates a Params struct with all fields specified.
-// Note: 'cap' parameter from NewParams is ignored here as lowCap was removed.
 func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32) Params {
 	return Params{
-		lr:                  learningRate,
-		decay:               decay,
-		L2:                  regularization,
-		// lowCap:              cap, // Removed
+		Lr:                  learningRate, // Exported field name
+		Decay:               decay,        // Exported field name
+		L2:                  regularization, // Exported field name
 		MomentumCoefficient: momentumCoefficient,
 	}
 }
 
 func defaultParams() *Params {
 	return &Params{
-		lr:     0.01,
-		decay:  0.95, // Reduced decay rate
-		L2:     1e-4, // Enabled L2 regularization
-		// lowCap: 0, // Removed
-		MomentumCoefficient: 0.9, // Default momentum coefficient
+		Lr:     0.01, // Exported field name
+		Decay:  0.95, // Exported field name
+		L2:     1e-4, // Exported field name
+		MomentumCoefficient: 0.9,
 	}
 }
 
@@ -129,49 +126,39 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 	for i := 0; i < numHiddenLayers; i++ {
 		currentHiddenLayerSize := hiddenConfig[i]
 		hiddenLayer := &Layer{
-			neurons:    make([]*Neuron, currentHiddenLayerSize),
-			activation: ReLU{}, // Default activation for hidden layers
+			Neurons:    make([]*Neuron, currentHiddenLayerSize), // Exported field name
+			Activation: ReLU{},                                 // Exported field name
 		}
 		for j := 0; j < currentHiddenLayerSize; j++ {
-			hiddenLayer.neurons[j] = &Neuron{
-				weights:  make([]float32, prevLayerNeuronCount),
-				// Initialize bias using Xavier/Glorot initialization.
-				bias:     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params),
-				// Initialize momentum buffer (used for SGD with momentum).
-				momentum: make([]float32, prevLayerNeuronCount),
+			hiddenLayer.Neurons[j] = &Neuron{ // Exported field name
+				Weights:  make([]float32, prevLayerNeuronCount), // Exported field name
+				Bias:     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.Params), // Exported field name
+				Momentum: make([]float32, prevLayerNeuronCount), // Exported field name
 			}
-			// Initialize weights using Xavier/Glorot initialization.
-			// Helps prevent vanishing/exploding gradients during initial training phases.
-			for k := range hiddenLayer.neurons[j].weights {
-				hiddenLayer.neurons[j].weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.params)
+			for k := range hiddenLayer.Neurons[j].Weights { // Exported field names
+				hiddenLayer.Neurons[j].Weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.Params) // Exported field name
 			}
 		}
-		nn.layers[i] = hiddenLayer
+		nn.Layers[i] = hiddenLayer // Exported field name
 		prevLayerNeuronCount = currentHiddenLayerSize // Update for the next layer's input count
 	}
 
 	// Create Output Layer
-	// At this point, prevLayerNeuronCount holds the neuron count of the last hidden layer.
 	outputLayer := &Layer{
-		neurons:    make([]*Neuron, outputSize),
-		activation: Linear{}, // Standard for classification before softmax
+		Neurons:    make([]*Neuron, outputSize), // Exported field name
+		Activation: Linear{},                     // Exported field name
 	}
 	for l := 0; l < outputSize; l++ {
-		outputLayer.neurons[l] = &Neuron{
-			weights: make([]float32, prevLayerNeuronCount),
-			// Output layer biases are often initialized to zero, but using Xavier for consistency with current code.
-			// Initialize bias using Xavier/Glorot initialization.
-			bias:     xavierInit(prevLayerNeuronCount, outputSize, nn.params),
-			// Initialize momentum buffer.
-			momentum: make([]float32, prevLayerNeuronCount),
+		outputLayer.Neurons[l] = &Neuron{ // Exported field name
+			Weights: make([]float32, prevLayerNeuronCount), // Exported field name
+			Bias:     xavierInit(prevLayerNeuronCount, outputSize, nn.Params), // Exported field name
+			Momentum: make([]float32, prevLayerNeuronCount), // Exported field name
 		}
-		// Initialize weights using Xavier/Glorot initialization.
-		for k := range outputLayer.neurons[l].weights {
-			outputLayer.neurons[l].weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.params)
+		for k := range outputLayer.Neurons[l].Weights { // Exported field names
+			outputLayer.Neurons[l].Weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.Params) // Exported field name
 		}
 	}
-	// The output layer is the last layer in the nn.layers slice.
-	nn.layers[numHiddenLayers] = outputLayer
+	nn.Layers[numHiddenLayers] = outputLayer // Exported field name
 
 	return nn
 }
@@ -184,35 +171,32 @@ func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params 
 // FeedForward propagates the input signal through the network, layer by layer,
 // calculating the output of each neuron based on weights, biases, and activation functions.
 func (nn *NeuralNetwork) FeedForward(input []float32) {
-	// Input is now []float32. Copy it to nn.input.
-	// nn.input slice is preallocated in initialise. This loop populates it.
-	if len(input) != len(nn.input) {
-		// This shouldn't happen if inputSize matches, but as a safeguard:
-		panic(fmt.Sprintf("FeedForward: input size %d does not match network input size %d", len(input), len(nn.input)))
+	// Input is now []float32. Copy it to the internal nn.Input buffer.
+	// nn.Input slice is preallocated in initialise.
+	if len(input) != len(nn.Input) { // Exported field name
+		panic(fmt.Sprintf("FeedForward: input size %d does not match network input size %d", len(input), len(nn.Input))) // Exported field name
 	}
-	copy(nn.input, input) // Copy input slice to internal buffer
+	copy(nn.Input, input) // Exported field name
 
-	// The first layer takes inputs as X from nn.input
-	for _, neuron := range nn.layers[0].neurons {
-		neuron.output = neuron.bias
-		for j := 0; j < len(nn.input); j++ { // Iterate over nn.input
-			neuron.output += nn.input[j] * neuron.weights[j] // Use nn.input directly
+	// Process the first layer (connected to the input)
+	for _, neuron := range nn.Layers[0].Neurons { // Exported field names
+		neuron.Output = neuron.Bias // Exported field names
+		for j := 0; j < len(nn.Input); j++ { // Exported field name
+			neuron.Output += nn.Input[j] * neuron.Weights[j] // Exported field names
 		}
-		neuron.output = nn.layers[0].activation.Activate(neuron.output) // Removed UseFloat64 flag
-		neuron.output = capValue(neuron.output)
+		neuron.Output = nn.Layers[0].Activation.Activate(neuron.Output) // Exported field names
+		neuron.Output = capValue(neuron.Output) // Exported field name
 	}
-	// nn.input is already set.
 	// Process hidden and output layers (i >= 1) using direct loops
-	for i := 1; i < len(nn.layers); i++ {
-		for _, neuron := range nn.layers[i].neurons {
-			// Use float64 for intermediate sum
-			var sum64 float64 = float64(neuron.bias)
-			for j := 0; j < len(nn.layers[i-1].neurons); j++ {
-				sum64 += float64(nn.layers[i-1].neurons[j].output) * float64(neuron.weights[j])
+	for i := 1; i < len(nn.Layers); i++ { // Exported field name
+		for _, neuron := range nn.Layers[i].Neurons { // Exported field names
+			var sum64 float64 = float64(neuron.Bias) // Exported field name
+			for j := 0; j < len(nn.Layers[i-1].Neurons); j++ { // Exported field names
+				sum64 += float64(nn.Layers[i-1].Neurons[j].Output) * float64(neuron.Weights[j]) // Exported field names
 			}
-			neuron.output = float32(sum64)
-			neuron.output = nn.layers[i].activation.Activate(neuron.output)
-			neuron.output = capValue(neuron.output)
+			neuron.Output = float32(sum64) // Exported field name
+			neuron.Output = nn.Layers[i].Activation.Activate(neuron.Output) // Exported field names
+			neuron.Output = capValue(neuron.Output) // Exported field name
 		}
 	}
 }
@@ -307,19 +291,18 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	return clone
 }
 
+// zeroAccumulatedGradients resets the gradient accumulators for all neurons before processing a new mini-batch.
 func (nn *NeuralNetwork) zeroAccumulatedGradients() {
-	for _, layer := range nn.layers {
-		for _, neuron := range layer.neurons {
-			// Ensure accumulatedWeightGradients slice is allocated and zeroed
-			if neuron.accumulatedWeightGradients == nil || len(neuron.accumulatedWeightGradients) != len(neuron.weights) {
-				neuron.accumulatedWeightGradients = make([]float32, len(neuron.weights))
+	for _, layer := range nn.Layers { // Exported field name
+		for _, neuron := range layer.Neurons { // Exported field name
+			if neuron.AccumulatedWeightGradients == nil || len(neuron.AccumulatedWeightGradients) != len(neuron.Weights) { // Exported field names
+				neuron.AccumulatedWeightGradients = make([]float32, len(neuron.Weights)) // Exported field names
 			} else {
-				for k := range neuron.accumulatedWeightGradients {
-					neuron.accumulatedWeightGradients[k] = 0.0
+				for k := range neuron.AccumulatedWeightGradients { // Exported field name
+					neuron.AccumulatedWeightGradients[k] = 0.0 // Exported field name
 				}
 			}
-			// Zero out accumulatedBiasGradient
-			neuron.accumulatedBiasGradient = 0.0
+			neuron.AccumulatedBiasGradient = 0.0 // Exported field name
 		}
 	}
 }
@@ -461,11 +444,11 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 			averageEpochLoss = totalEpochLoss / float32(samplesProcessedInEpoch)
 		}
 
-		fmt.Printf("Loss MiniBatch Epoch %d = %.2f (LR: %.5f)\n", e, averageEpochLoss, nn.params.lr)
+		fmt.Printf("Loss MiniBatch Epoch %d = %.2f (LR: %.5f)\n", e, averageEpochLoss, nn.Params.Lr) // Exported field name
 
-		// Apply learning rate decay at the end of each epoch
-		nn.params.lr *= nn.params.decay
-	}
+		// Apply learning rate decay at the end of each epoch.
+		nn.Params.Lr *= nn.Params.Decay // Exported field names
+	} // End of epoch loop
 }
 
 // backpropagateAndAccumulateForSample performs feedforward, calculates loss,
@@ -494,81 +477,60 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 	//    to reduce the overall loss.
 
 	// Calculate deltas for the output layer (using the simplified gradient)
-	outputLayer := nn.layers[len(nn.layers)-1]
-	if outputLayer.deltas == nil || len(outputLayer.deltas) != len(outputLayer.neurons) {
-		outputLayer.deltas = make([]float32, len(outputLayer.neurons))
+	outputLayer := nn.Layers[len(nn.Layers)-1] // Exported field name
+	if outputLayer.Deltas == nil || len(outputLayer.Deltas) != len(outputLayer.Neurons) { // Exported field names
+		outputLayer.Deltas = make([]float32, len(outputLayer.Neurons)) // Exported field names
 	}
-	// Removed incorrect line: errVecData := errVec.RawVector().Data
-	// Use the errVecData slice calculated earlier in this function.
-	for j := 0; j < len(outputLayer.neurons); j++ {
-		// For a single sample, the delta is the error component (softmax_output - target_j).
-		outputLayer.deltas[j] = capValue(float32(errVecData[j])) // Store the calculated delta
+	for j := 0; j < len(outputLayer.Neurons); j++ { // Exported field name
+		outputLayer.Deltas[j] = capValue(float32(errVecData[j])) // Exported field name
 	}
 
-	// Propagate deltas backward through hidden layers:
-	// The delta for a neuron in a hidden layer is calculated based on the weighted sum
-	// of the deltas from the layer *ahead* of it, multiplied by the derivative of its own activation function.
-	// Formula: delta_j = (Sum_k(delta_k * weight_kj)) * activation_derivative(output_j)
-	// where j is current layer neuron index, k is next layer neuron index.
-	for i := len(nn.layers) - 2; i >= 0; i-- { // Iterate backwards from last hidden layer
-		layer := nn.layers[i]
-		nextLayer := nn.layers[i+1]
+	// Propagate deltas backward through hidden layers
+	for i := len(nn.Layers) - 2; i >= 0; i-- { // Exported field name
+		layer := nn.Layers[i]     // Exported field name
+		nextLayer := nn.Layers[i+1] // Exported field name
 
-		if layer.deltas == nil || len(layer.deltas) != len(layer.neurons) {
-			layer.deltas = make([]float32, len(layer.neurons))
+		if layer.Deltas == nil || len(layer.Deltas) != len(layer.Neurons) { // Exported field names
+			layer.Deltas = make([]float32, len(layer.Neurons)) // Exported field names
 		}
 
-		for j, neuron := range layer.neurons { // For each neuron 'j' in current layer 'i'
-			// Removed redundant float32 errorSumTimesWeight calculation loop.
-			// Calculate error sum using float64 directly.
+		for j, neuron := range layer.Neurons { // Exported field name
 			var errorSumTimesWeight64 float64 = 0.0
-			// Sum (delta_k * weight_kj) from the next layer
-			for k, nextNeuron := range nextLayer.neurons { // k = index in next layer
-				// nextNeuron.weights[j] is the weight connecting neuron j (current layer) to neuron k (next layer)
-				errorSumTimesWeight64 += float64(nextNeuron.weights[j]) * float64(nextLayer.deltas[k])
+			for k, nextNeuron := range nextLayer.Neurons { // Exported field name
+				errorSumTimesWeight64 += float64(nextNeuron.Weights[j]) * float64(nextLayer.Deltas[k]) // Exported field names
 			}
-			// Multiply by the derivative of the activation function for the current neuron j
-			derivative := layer.activation.Derivative(neuron.output)
-			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative))) // Store the calculated delta
+			derivative := layer.Activation.Derivative(neuron.Output) // Exported field names
+			layer.Deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative))) // Exported field name
 		}
 	}
 
-	// 4. Accumulate Gradients: Calculate the gradient contribution of this sample for each weight and bias,
-	//    and add it to the running total for the current mini-batch.
-	//    Gradient for weight w_ij = delta_j * output_i (where i is prev layer neuron, j is current layer neuron)
-	//    Gradient for bias b_j = delta_j
-	for layerIndex, layer := range nn.layers {
-		var prevLayerOutputs []float32 // Holds outputs from the layer feeding *into* the current layer
+	// 4. Accumulate Gradients
+	for layerIndex, layer := range nn.Layers { // Exported field name
+		var prevLayerOutputs []float32
 		if layerIndex == 0 {
-			// First layer's inputs are the network inputs
-			prevLayerOutputs = nn.input // Activations from input layer (i.e., the input sample itself)
+			prevLayerOutputs = nn.Input // Exported field name
 		} else {
-			prevLayer := nn.layers[layerIndex-1]
-			currentPrevLayerNumNeurons := len(prevLayer.neurons)
-			// Ensure buffer is large enough (should be by design from initialise)
-			if cap(nn.prevLayerOutputsBuffer) < currentPrevLayerNumNeurons {
-				// This is a fallback, ideally initialise sizes it correctly.
-				nn.prevLayerOutputsBuffer = make([]float32, currentPrevLayerNumNeurons)
+			prevLayer := nn.Layers[layerIndex-1] // Exported field name
+			currentPrevLayerNumNeurons := len(prevLayer.Neurons) // Exported field name
+			if cap(nn.PrevLayerOutputsBuffer) < currentPrevLayerNumNeurons { // Exported field name
+				nn.PrevLayerOutputsBuffer = make([]float32, currentPrevLayerNumNeurons) // Exported field name
 			}
-			prevLayerOutputs = nn.prevLayerOutputsBuffer[:currentPrevLayerNumNeurons] // Re-slice the buffer
-			for pIdx, pNeuron := range prevLayer.neurons {
-				prevLayerOutputs[pIdx] = pNeuron.output // Activations from the previous layer
+			prevLayerOutputs = nn.PrevLayerOutputsBuffer[:currentPrevLayerNumNeurons] // Exported field name
+			for pIdx, pNeuron := range prevLayer.Neurons { // Exported field name
+				prevLayerOutputs[pIdx] = pNeuron.Output // Exported field name
 			}
 		}
 
-		for nIdx, neuron := range layer.neurons { // For neuron 'nIdx' in current 'layer'
-			sampleDelta := layer.deltas[nIdx] // Delta for this neuron, for this sample
+		for nIdx, neuron := range layer.Neurons { // Exported field name
+			sampleDelta := layer.Deltas[nIdx] // Exported field name
 
-			// Accumulate weight gradients: gradient_w = delta_current_neuron * output_prev_layer_neuron
-			if neuron.accumulatedWeightGradients != nil { // Should be initialized by zeroAccumulatedGradients
-				for wIdx := range neuron.weights {
-					// Use float64 for intermediate calculation
+			if neuron.AccumulatedWeightGradients != nil { // Exported field name
+				for wIdx := range neuron.Weights { // Exported field name
 					gradContrib64 := float64(sampleDelta) * float64(prevLayerOutputs[wIdx])
-					neuron.accumulatedWeightGradients[wIdx] += float32(gradContrib64)
+					neuron.AccumulatedWeightGradients[wIdx] += float32(gradContrib64) // Exported field name
 				}
 			}
-			// Accumulate bias gradient: gradient_b = delta_current_neuron
-			neuron.accumulatedBiasGradient += sampleDelta
+			neuron.AccumulatedBiasGradient += sampleDelta // Exported field name
 		}
 	}
 	return loss
@@ -640,16 +602,18 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 {
 	}
 	// Calculate L2 regularization part
 	var reg64 float64 = 0.0
-	for _, layer := range nn.layers {
-		for _, neuron := range layer.neurons {
-			for _, w := range neuron.weights {
-				reg64 += float64(w) * float64(w)
+	for _, layer := range nn.Layers { // Exported field name
+		for _, neuron := range layer.Neurons { // Exported field name
+			for _, w := range neuron.Weights { // Exported field name
+				reg64 += float64(w) * float64(w) // Sum of squared weights
 			}
 		}
 	}
-	loss64 += 0.5 * float64(nn.params.L2) * reg64
+	// Add L2 penalty to the loss.
+	loss64 += 0.5 * float64(nn.Params.L2) * reg64 // Exported field name
 	loss = float32(loss64) // Cast final result back to float32
-	// Guard against NaN or Inf
+
+	// Guard against NaN or Inf results, returning 0 loss in such cases.
 	if math.IsNaN(float64(loss)) || math.IsInf(float64(loss), 0) {
 		return 0.0
 	}
@@ -708,8 +672,6 @@ func softmax(output []float32, params Params) []float32 {
 	stableOutput := stableSoftmax(output)
 
 	// Apply capValue to the results.
-	// this primarily handles any residual NaNs by converting them to 0.
-	// If lowCap were non-zero, it would enforce min/max probability magnitudes.
 	for i, v := range stableOutput {
 		stableOutput[i] = capValue(v)
 	}
