@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	TempDirName = "temp" // Directory to save images
-	LabelSize   = 1
-	Colors      = 3
+	TempDirName      = "temp" // Directory to save images
+	TrainSplitRatio  = 0.8    // Proportion of data used for training
+	LabelSize        = 1
+	Colors           = 3
 	D         = 32
 	Batch     = 10000
 	Channel   = D * D
@@ -313,6 +314,7 @@ func runTrainingSession(
 	// initialRelu float32, // Removed
 	initialMomentum float32,
 	// initialBN float32, // Removed
+	// trainToValidationRatio int, // Removed parameter
 ) {
 	fmt.Printf("\n--- Starting Training Session (Calculations use float64 internally) ---\n")
 
@@ -352,12 +354,9 @@ func runTrainingSession(
 		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
 		for sample := 0; sample < 3; sample++ {
 			// Select a random validation sample to predict and save
-			validationStart := to
-			validationEnd := to + ((to - from) / trainToValidationRatio)
-			if validationEnd > len(inputs) { // Ensure we don't go out of bounds
-				validationEnd = len(inputs)
-			}
-			if validationStart >= validationEnd { // Skip if validation set is empty or invalid
+			validationStart := to         // Validation starts after training data
+			validationEnd := len(inputs) // Validation ends at the end of the dataset
+			if validationStart >= validationEnd { // Skip if validation set is empty
 				fmt.Println("Skipping image saving due to invalid validation range.")
 				break
 			}
@@ -369,7 +368,7 @@ func runTrainingSession(
 		}
 		fmt.Printf("Train accuracy: %.2f, Validation accuracy: %.2f\n",
 			accuracy(nn, inputs, labels, from, to, numWorkers),
-			accuracy(nn, inputs, labels, to, to+((to-from)/trainToValidationRatio), numWorkers),
+			accuracy(nn, inputs, labels, to, len(inputs), numWorkers), // Use full remaining data for validation
 		)
 		epochDuration := time.Since(epochStartTime)
 		totalEpochsDuration += epochDuration
@@ -428,12 +427,13 @@ func main() {
 	fmt.Printf("Total samples loaded: %d\n", len(inputs))
 
 	from := 0
-	to := from + 8000
+	// Calculate training set size based on ratio
+	trainingSetSize := int(float64(datasetSize) * TrainSplitRatio)
+	to := trainingSetSize // 'to' is the end index (exclusive) for training data
 	epochs := 10
-	train_to_validation := 4
+	// train_to_validation := 4 // Removed
 
-	trainingSetSize := to - from
-	validationSetSize := (to - from) / train_to_validation
+	validationSetSize := datasetSize - trainingSetSize // Use remaining data for validation
 	miniBatchSize := 64 // Define mini-batch size
 	fmt.Printf("Training set size: %d samples\n", trainingSetSize)
 	fmt.Printf("Validation set size: %d samples\n", validationSetSize)
@@ -466,7 +466,7 @@ func main() {
 	// Run a single training session (UseFloat64 flag is now removed)
 	runTrainingSession(
 		inputs, labels, imgs, descr,
-		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
+		from, to, epochs, /*train_to_validation,*/ miniBatchSize, baseNumWorkers,
 		initialLR, initialDecay, initialL2, initialLowCap, initialMomentum,
 	)
 
