@@ -131,3 +131,14 @@ Build the executable using Go:
 ```bash
 go build -o gon
 ```
+
+## Hyperparameter Tuning (Grid Search Suggestion)
+
+To find optimal hyperparameters, a grid search could be implemented. Here's a suggested set of parameters and values targeting ~96 combinations:
+
+- **Learning Rate (`-lr`)**: `[0.05, 0.01, 0.005, 0.001]` (4 values)
+- **L2 Regularization (`-l2`)**: `[0, 1e-5, 1e-4, 1e-3]` (4 values)
+- **Momentum Coefficient (`-momentum`)**: `[0.9, 0.95]` (2 values)
+- **Mini-batch Size (`-batch`)**: `[32, 64, 128]` (3 values)
+
+Note: Implementing grid search would involve modifying `load.go` to iterate through these combinations, potentially running multiple training sessions and logging results.
