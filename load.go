@@ -309,6 +309,13 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOut
 	return float32(correctPredictions) / float32(numSamplesToTest)
 }
 
+var (
+    flagLR      = flag.Float64("lr", 0.01, "learning rate")
+    flagDecay   = flag.Float64("decay", 0.95, "learning rate decay")
+    flagEpochs  = flag.Int("epochs", NumEpochs, "number of epochs")
+    flagBatch   = flag.Int("batch", MiniBatchSize, "mini-batch size")
+    flagWorkers = flag.Int("workers", runtime.NumCPU(), "number of workers")
+)
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func runTrainingSession(
@@ -467,8 +474,8 @@ func main() {
 	// or we hardcode them based on current defaults if a public getter isn't available.
 	// For now, let's use the values from neuralnet.defaultParams() directly.
 	// These are: lr: 0.01, decay: 0.95, L2: 1e-4, lowCap: 0, relu: 0, momentum: 0.9, bn: 0.0
-	initialLR := float32(0.01)
-	initialDecay := float32(0.95)
+	initialLR := float32(*flagLR)
+	initialDecay := float32(*flagDecay)
 	initialL2 := float32(1e-4)
 	initialLowCap := float32(0.0)
 	initialMomentum := float32(0.9)
