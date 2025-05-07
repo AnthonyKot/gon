@@ -116,7 +116,7 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 			}
 		}
 	}
-	nn.prevLayerOutputsBuffer = make([]float32, maxPrevLayerSize)
+	nn.PrevLayerOutputsBuffer = make([]float32, maxPrevLayerSize)
 
 	// prevLayerNeuronCount tracks the number of neurons in the layer that feeds into the current one.
 	// It starts with inputSize for the first hidden layer.
@@ -251,41 +251,41 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	}
 
 	// Deep copy all layers
-	for i, layer := range nn.layers { // Corrected: use receiver nn
+	for i, layer := range nn.Layers { // Corrected: use receiver nn
 		cloneLayer := &Layer{
-			neurons:    make([]*Neuron, len(layer.neurons)),
-			activation: layer.activation,
+			Neurons:    make([]*Neuron, len(layer.Neurons)),
+			Activation: layer.Activation,
 		}
 
 		// Deep copy all neurons
-		for j, neuron := range layer.neurons {
+		for j, neuron := range layer.Neurons {
 			cloneNeuron := &Neuron{
-				weights:  make([]float32, len(neuron.weights)),
-				bias:     neuron.bias,
-				output:   neuron.output,
-				momentum: make([]float32, len(neuron.momentum)), // Initialize momentum slice
+				Weights:  make([]float32, len(neuron.Weights)),
+				Bias:     neuron.Bias,
+				Output:   neuron.Output,
+				Momentum: make([]float32, len(neuron.Momentum)), // Initialize momentum slice
 			}
 
 			// Copy weights
-			copy(cloneNeuron.weights, neuron.weights)
+			copy(cloneNeuron.Weights, neuron.Weights)
 			// Copy momentum
-			if neuron.momentum != nil { // Guard against nil if original momentum could be nil (though init suggests it won't be)
-				copy(cloneNeuron.momentum, neuron.momentum)
+			if neuron.Momentum != nil { // Guard against nil if original momentum could be nil (though init suggests it won't be)
+				copy(cloneNeuron.Momentum, neuron.Momentum)
 			}
-			cloneLayer.neurons[j] = cloneNeuron
+			cloneLayer.Neurons[j] = cloneNeuron
 		}
 
-		clone.layers[i] = cloneLayer
+		clone.Layers[i] = cloneLayer
 	}
 
 	// Copy input if it exists
-	if nn.input != nil {
-		clone.input = make([]float32, len(nn.input))
-		copy(clone.input, nn.input)
+	if nn.Input != nil {
+		clone.Input = make([]float32, len(nn.Input))
+		copy(clone.Input, nn.Input)
 	}
-	if nn.prevLayerOutputsBuffer != nil {
-		clone.prevLayerOutputsBuffer = make([]float32, len(nn.prevLayerOutputsBuffer))
-		copy(clone.prevLayerOutputsBuffer, nn.prevLayerOutputsBuffer)
+	if nn.PrevLayerOutputsBuffer != nil {
+		clone.PrevLayerOutputsBuffer = make([]float32, len(nn.PrevLayerOutputsBuffer))
+		copy(clone.PrevLayerOutputsBuffer, nn.PrevLayerOutputsBuffer)
 	}
 
 	return clone
@@ -418,15 +418,15 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 					if clone == nil { // Can happen if a worker had no samples
 						continue
 					}
-					for layerIdx, cloneLayer := range clone.layers {
-						for neuronIdx, cloneNeuron := range cloneLayer.neurons {
-							mainNeuron := nn.layers[layerIdx].neurons[neuronIdx]
-							if cloneNeuron.accumulatedWeightGradients != nil {
-								for wIdx, grad := range cloneNeuron.accumulatedWeightGradients {
-									mainNeuron.accumulatedWeightGradients[wIdx] += grad
+					for layerIdx, cloneLayer := range clone.Layers {
+						for neuronIdx, cloneNeuron := range cloneLayer.Neurons {
+							mainNeuron := nn.Layers[layerIdx].Neurons[neuronIdx]
+							if cloneNeuron.AccumulatedWeightGradients != nil {
+								for wIdx, grad := range cloneNeuron.AccumulatedWeightGradients {
+									mainNeuron.AccumulatedWeightGradients[wIdx] += grad
 								}
 							}
-							mainNeuron.accumulatedBiasGradient += cloneNeuron.accumulatedBiasGradient
+							mainNeuron.AccumulatedBiasGradient += cloneNeuron.AccumulatedBiasGradient
 						}
 					}
 				}
@@ -539,10 +539,10 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 // TrainBatch function removed as unused (superseded by TrainMiniBatch).
 
 func (nn *NeuralNetwork) Output() []float32 {
-	outputLayer := nn.layers[len(nn.layers)-1].neurons // Use unexported field names
+	outputLayer := nn.Layers[len(nn.Layers)-1].Neurons // Use unexported field names
 	output := make([]float32, len(outputLayer))
 	for i, neuron := range outputLayer {
-		output[i] = neuron.output // Use unexported field name
+		output[i] = neuron.Output // Use unexported field name
 	}
 	return output
 }
@@ -593,11 +593,11 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 {
 
 	// Use float64 for intermediate loss calculation
 	var loss64 float64
-	if len(propsData) != len(target) {
-		panic("calculateLoss: propsData and target length mismatch")
+	if len(softmaxProbs) != len(target) {
+		panic("calculateLoss: softmaxProbs and target length mismatch")
 	}
-	for i := 0; i < len(propsData); i++ {
-		p64 := math.Max(propsData[i], 1e-15)
+	for i := 0; i < len(softmaxProbs); i++ {
+		p64 := math.Max(float64(softmaxProbs[i]), 1e-15) // Ensure p64 is float64
 		loss64 -= float64(target[i]) * math.Log(p64)
 	}
 	// Calculate L2 regularization part
@@ -734,12 +734,12 @@ func (l *Layer) String() string {
 	var sb strings.Builder
 
 	// Print each neuron
-	for i, neuron := range l.neurons {
-		sb.WriteString(fmt.Sprintf("Neuron %d: output=%.2f\n", i, neuron.output))
+	for i, neuron := range l.Neurons {
+		sb.WriteString(fmt.Sprintf("Neuron %d: output=%.2f\n", i, neuron.Output))
 	}
 
 	// Print deltas
-	sb.WriteString(fmt.Sprintf("Deltas: %v\n", l.deltas))
+	sb.WriteString(fmt.Sprintf("Deltas: %v\n", l.Deltas))
 
 	return sb.String()
 }
@@ -748,7 +748,7 @@ func (nn *NeuralNetwork) String() string {
 	var sb strings.Builder
 
 	// Iterate through the layers and print them
-	for i, layer := range nn.layers {
+	for i, layer := range nn.Layers {
 		sb.WriteString(fmt.Sprintf("Layer %d:\n%s\n", i, layer.String()))
 	}
 
