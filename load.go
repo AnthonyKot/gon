@@ -404,6 +404,7 @@ func calculateAndPrintPerClassAccuracy(nn *neuralnet.NeuralNetwork, allInputs []
 var (
     flagLR      = flag.Float64("lr", 0.01, "learning rate")
     flagDecay   = flag.Float64("decay", 0.95, "learning rate decay")
+    flagL2      = flag.Float64("l2", 1e-4, "L2 regularization factor")
     flagEpochs  = flag.Int("epochs", NumEpochs, "number of epochs")
     flagBatch   = flag.Int("batch", MiniBatchSize, "mini-batch size")
     flagWorkers = flag.Int("workers", runtime.NumCPU(), "number of workers")
@@ -556,7 +557,7 @@ func main() {
 	// These are: lr: 0.01, decay: 0.95, L2: 1e-4, lowCap: 0, relu: 0, momentum: 0.9, bn: 0.0
 	initialLR := float32(*flagLR)
 	initialDecay := float32(*flagDecay)
-	initialL2 := float32(1e-4)
+	initialL2 := float32(*flagL2)
 	// initialLowCap := float32(0.0) // Removed
 	initialMomentum := float32(0.9)
 	fmt.Printf("Initial LR: %.5f, Decay: %.5f, L2: %.6f, Momentum: %.5f\n", initialLR, initialDecay, initialL2, initialMomentum)
