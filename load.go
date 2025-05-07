@@ -227,7 +227,7 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 		fmt.Println("Error loading CIFAR-10:", err)
 		panic("Error loading CIFAR-10")
 	}
-	out := oneHotEncode(labels, 10)
+	// Remove redundant declaration: out := oneHotEncode(labels, 10)
 	out := oneHotEncode(labels, NumClasses)
 	return images, out
 }
