@@ -308,9 +308,9 @@ func runTrainingSession(
 		initialDecay,
 		initialL2,
 		initialLowCap,
-		initialRelu,
+		// initialRelu, // Removed
 		initialMomentum,
-		initialBN, // bn
+		// initialBN, // Removed
 	)
 
 	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, currentParams)
