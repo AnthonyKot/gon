@@ -1,15 +1,15 @@
 package main
 
 import (
-	"gon/neuralnet"
 	"bufio"
 	"fmt"
+	"gon/neuralnet"
 	"image"
 	"image/color"
 	"image/png"
 	"io"
-	"os"
 	"math/rand"
+	"os"
 
 	"flag"
 	"runtime"
@@ -47,17 +47,17 @@ func loadCIFAR10(filePath string) ([][]mat.Dense, []int, error) {
 			return nil, nil, err
 		}
 		for i := 0; i < Batch; i++ {
-			row := data[i * Row : (i + 1) * Row]
+			row := data[i*Row : (i+1)*Row]
 			labels[i] = int(row[0])
 
-			pixels := row[LabelSize : LabelSize + ImageSize]
+			pixels := row[LabelSize : LabelSize+ImageSize]
 			norm := make([]float64, ImageSize)
 			for i := 0; i < len(pixels); i++ { // Corrected loop to start from 0
 				norm[i] = float64(pixels[i]) / 255.0
 			}
 			image := make([]mat.Dense, 3)
 			for i := 0; i < Colors; i++ {
-				channel := norm[i * Channel : (i + 1) * Channel]
+				channel := norm[i*Channel : (i+1)*Channel]
 				image[i] = *mat.NewDense(32, 32, channel)
 			}
 			images[i] = image
@@ -104,7 +104,7 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int, j int) {
 	}
 	// Save the image to a PNG file
 	ws_idx := 0
-	for j:= 0; j < ls[i].Len(); j++ {
+	for j := 0; j < ls[i].Len(); j++ {
 		if ls[i].AtVec(j) == 1.0 {
 			ws_idx = j
 		}
@@ -159,30 +159,30 @@ func label(encoded mat.VecDense) int {
 }
 
 func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
-    // Create a new matrix to store the grayscale image
+	// Create a new matrix to store the grayscale image
 	rows, cols := rgbImage[0].Dims()
-    grayImage := mat.NewDense(rows, cols, nil)
+	grayImage := mat.NewDense(rows, cols, nil)
 
-    // Iterate over each pixel in the RGB image
-    for i := 0; i < rows; i++ {
-        for j := 0; j < cols; j++ {
-            // Calculate the grayscale value using the weighted average of RGB components
-            r, g, b := rgbImage[0].At(i, j), rgbImage[1].At(i, j), rgbImage[2].At(i, j)
-            gray := 0.299*r + 0.587*g + 0.114*b // Calculate grayscale as float64
-            grayImage.Set(i, j, gray) // Set the normalized float64 value directly
+	// Iterate over each pixel in the RGB image
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			// Calculate the grayscale value using the weighted average of RGB components
+			r, g, b := rgbImage[0].At(i, j), rgbImage[1].At(i, j), rgbImage[2].At(i, j)
+			gray := 0.299*r + 0.587*g + 0.114*b // Calculate grayscale as float64
+			grayImage.Set(i, j, gray)           // Set the normalized float64 value directly
 
-        }
-    }
+		}
+	}
 
-    return *grayImage
+	return *grayImage
 }
 
 func flaten(image mat.Dense) mat.VecDense {
 	rows, cols := image.Dims()
-	vec := mat.NewVecDense(rows * cols, nil)
-	for i:= 0; i < rows; i++ {
-		for j:= 0; j < cols; j++ {
-			vec.SetVec(i * cols + j, image.At(i, j))
+	vec := mat.NewVecDense(rows*cols, nil)
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			vec.SetVec(i*cols+j, image.At(i, j))
 		}
 	}
 	return *vec
@@ -202,8 +202,8 @@ func finMaxIdx(output []float32) int {
 	max := output[0]
 	for i := 0; i < len(output); i++ {
 		if max < output[i] {
-			max = output[i];
-			index = i;
+			max = output[i]
+			index = i
 		}
 	}
 	return index
@@ -221,24 +221,24 @@ func load() ([][]mat.Dense, []mat.VecDense) {
 
 func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expectedOutputs []mat.VecDense, from int, to int) float32 {
 	accuracy := 0
-	for i := from; i < to; i ++ {
+	for i := from; i < to; i++ {
 		if label(expectedOutputs[i]) == nn.Predict(trainingData[i]) {
 			accuracy++
 		}
 	}
-	return float32(accuracy) / float32(to - from)
+	return float32(accuracy) / float32(to-from)
 }
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func main() {
-    runtime.GOMAXPROCS(runtime.NumCPU())
-    flag.Parse()
-    if *cpuprofile != "" {
-        f, _ := os.Create(*cpuprofile)
-        pprof.StartCPUProfile(f)
-        defer pprof.StopCPUProfile()
-    }
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	flag.Parse()
+	if *cpuprofile != "" {
+		f, _ := os.Create(*cpuprofile)
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 	imgs, labels := load()
 	descr := readLabels()
 	// input layer + 1 hidden layer + output layer
@@ -258,10 +258,10 @@ func main() {
 	shuffledColorImgs := make([][]mat.Dense, datasetSize) // For shuffling the original color images
 
 	for i := 0; i < datasetSize; i++ {
-		idx := permutation[i] // Original index from permutation
-		shuffledInputs[i] = inputs[idx] // inputs here is original b/w flattened
-		shuffledLabels[i] = labels[idx] // labels here is original one-hot
-		shuffledColorImgs[i] = imgs[idx]  // imgs here is original color images
+		idx := permutation[i]            // Original index from permutation
+		shuffledInputs[i] = inputs[idx]  // inputs here is original b/w flattened
+		shuffledLabels[i] = labels[idx]  // labels here is original one-hot
+		shuffledColorImgs[i] = imgs[idx] // imgs here is original color images
 	}
 	// Use the shuffled data from now on
 	inputs = shuffledInputs
@@ -295,7 +295,7 @@ func main() {
 		// Switched to TrainMiniBatch, now with numWorkers
 		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
 		for sample := 0; sample < 3; sample++ {
-			j = to + rand.Intn((to - from) / train_to_validation)
+			j = to + rand.Intn((to-from)/train_to_validation)
 			pred := nn.Predict(inputs[j])
 			saveImg(imgs, labels, descr, j, pred)
 			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
@@ -306,7 +306,6 @@ func main() {
 		)
 		fmt.Println()
 	}
-
 
 	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
 	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
@@ -330,9 +329,9 @@ func main() {
 	// }
 	// profiling top 5
 	// flat  flat%   sum%        cum   cum%
-    // 24.42% (*NeuralNetwork).UpdateWeights
-    // 20.00% gon/neuralnet.ConvertWeightsDense
-    // 17.37% gon/neuralnet.(*NeuralNetwork).CalculateLoss
-    // 11.85% gonum.org/v1/gonum/mat.(*VecDense).at (inline)
-    // 11.51% gon/neuralnet.(*NeuralNetwork).FeedForward
+	// 24.42% (*NeuralNetwork).UpdateWeights
+	// 20.00% gon/neuralnet.ConvertWeightsDense
+	// 17.37% gon/neuralnet.(*NeuralNetwork).CalculateLoss
+	// 11.85% gonum.org/v1/gonum/mat.(*VecDense).at (inline)
+	// 11.51% gon/neuralnet.(*NeuralNetwork).FeedForward
 }
