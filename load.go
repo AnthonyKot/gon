@@ -52,7 +52,7 @@ func loadCIFAR10(filePath string) ([][]mat.Dense, []int, error) {
 
 			pixels := row[LabelSize : LabelSize + ImageSize]
 			norm := make([]float64, ImageSize)
-			for i := 1; i < len(pixels); i++ {
+			for i := 0; i < len(pixels); i++ { // Corrected loop to start from 0
 				norm[i] = float64(pixels[i]) / 255.0
 			}
 			image := make([]mat.Dense, 3)
@@ -168,11 +168,8 @@ func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
         for j := 0; j < cols; j++ {
             // Calculate the grayscale value using the weighted average of RGB components
             r, g, b := rgbImage[0].At(i, j), rgbImage[1].At(i, j), rgbImage[2].At(i, j)
-            //gray := 0.299*r + 0.587*g + 0.114*b
-            //grayImage.Set(i, j, gray)
-            grey := uint8(0.299*r + 0.587*g + 0.114*b)
-            greyFloat := float64(grey) / 255.0
-            grayImage.Set(i, j, greyFloat)
+            gray := 0.299*r + 0.587*g + 0.114*b // Calculate grayscale as float64
+            grayImage.Set(i, j, gray) // Set the normalized float64 value directly
 
         }
     }
