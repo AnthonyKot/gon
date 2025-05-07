@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"sync" // Added for multi-threading in accuracy calculation
+	"time" // Added for timing
 
 	"flag"
 	"runtime"
@@ -341,7 +342,11 @@ func main() {
 	fmt.Printf("Number of workers for mini-batch processing: %d\n", numWorkers)
 	fmt.Println("---")
 
+	totalTrainingStartTime := time.Now()
+	var totalEpochsDuration time.Duration
+
 	for i := 0; i < epochs; i++ {
+		epochStartTime := time.Now()
 		// Switched to TrainMiniBatch, now with numWorkers
 		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1, numWorkers)
 		for sample := 0; sample < 3; sample++ {
@@ -354,8 +359,21 @@ func main() {
 			accuracy(nn, inputs, labels, from, to, numWorkers),
 			accuracy(nn, inputs, labels, to, to+((to-from)/train_to_validation), numWorkers),
 		)
+		epochDuration := time.Since(epochStartTime)
+		totalEpochsDuration += epochDuration
+		fmt.Printf("Epoch %d duration: %s\n", i, epochDuration)
 		fmt.Println()
 	}
+
+	totalTrainingDuration := time.Since(totalTrainingStartTime)
+	averageEpochDuration := time.Duration(0)
+	if epochs > 0 {
+		averageEpochDuration = totalEpochsDuration / time.Duration(epochs)
+	}
+	fmt.Println("---")
+	fmt.Printf("Total training duration: %s\n", totalTrainingDuration)
+	fmt.Printf("Average epoch duration: %s\n", averageEpochDuration)
+	fmt.Println("---")
 
 	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
 	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
