@@ -88,7 +88,7 @@ func readLabels() []string {
 	return words
 }
 
-func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int, j int) {
+func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, sampleIdx int, predIdx int) {
 	t := ts[i]
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
@@ -103,13 +103,13 @@ func saveImg(ts [][]mat.Dense, ls []mat.VecDense, ws []string, i int, j int) {
 		}
 	}
 	// Save the image to a PNG file
-	ws_idx := 0
-	for j := 0; j < ls[i].Len(); j++ {
-		if ls[i].AtVec(j) == 1.0 {
-			ws_idx = j
+	trueIdx := 0
+	for k := 0; k < ls[sampleIdx].Len(); k++ {
+		if ls[sampleIdx].AtVec(k) == 1.0 {
+			trueIdx = k
 		}
 	}
-	label := fmt.Sprintf("file_%s_%d_%s.png", ws[ws_idx], i, ws[j])
+	label := fmt.Sprintf("file_%s_%d_%s.png", ws[trueIdx], sampleIdx, ws[predIdx])
 	file, err := os.Create(label)
 	defer file.Close()
 	if err != nil {
@@ -177,7 +177,7 @@ func RGBToBlackWhite(rgbImage []mat.Dense) mat.Dense {
 	return *grayImage
 }
 
-func flaten(image mat.Dense) mat.VecDense {
+func flatten(image mat.Dense) mat.VecDense {
 	rows, cols := image.Dims()
 	vec := mat.NewVecDense(rows*cols, nil)
 	for i := 0; i < rows; i++ {
@@ -192,7 +192,7 @@ func converImagesToInputs(images [][]mat.Dense) []mat.VecDense {
 	inputs := make([]mat.VecDense, len(images))
 	for i := 0; i < len(inputs); i++ {
 		bwImage := RGBToBlackWhite(images[i]) // Convert to BW first
-		inputs[i] = flaten(bwImage)           // Then flatten
+		inputs[i] = flatten(bwImage)          // Then flatten
 	}
 	return inputs
 }
@@ -288,6 +288,9 @@ func main() {
 	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
 	j := 0
 	numWorkers := runtime.NumCPU() // Use number of available CPUs for workers
+	if numWorkers > neuralnet.MAX_WORKERS {
+		numWorkers = neuralnet.MAX_WORKERS
+	}
 	fmt.Printf("Number of workers for mini-batch processing: %d\n", numWorkers)
 	fmt.Println("---")
 

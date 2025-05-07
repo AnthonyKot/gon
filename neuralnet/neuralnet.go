@@ -366,6 +366,9 @@ TrainMiniBatch processes the training data in mini-batches.
 - numWorkers: The number of goroutines to use for processing samples within a mini-batch. If <= 1, runs single-threaded.
 */
 func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchSize int, epochs int, numWorkers int) {
+	if numWorkers > MAX_WORKERS {
+		numWorkers = MAX_WORKERS
+	}
 	numSamples := len(trainingData)
 	if numSamples == 0 {
 		fmt.Println("TrainMiniBatch: No training data provided.")
@@ -848,12 +851,6 @@ func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, 
 	return selectedInputs, selectedLabels
 }
 
-// Note: The import block below was duplicated and misplaced.
-// It's generally better to have all imports at the top of the file.
-// For this change, I am only removing the duplicated block.
-// The necessary imports (json, os) should already be part of the main import block at the top.
-// If not, they would need to be added there.
-// Assuming "encoding/json" and "os" are already in the top import block.
 
 func (nn *NeuralNetwork) Save(filename string) {
 	file, err := os.Create(filename)
@@ -868,7 +865,7 @@ func (nn *NeuralNetwork) Save(filename string) {
 	}
 	println("Model saved as " + filename)
 }
-func loadModel(filename string) {
+func loadModel(filename string) *NeuralNetwork {
 	file, err := os.Open(filename)
 	if err != nil {
 		panic(err)
@@ -881,6 +878,7 @@ func loadModel(filename string) {
 		panic(err)
 	}
 	println("Model load as " + filename)
+	return nn
 }
 func (l *Layer) String() string {
 	var sb strings.Builder
