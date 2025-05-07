@@ -46,8 +46,8 @@ type NeuralNetwork struct {
 }
 
 type Params struct {
-	lr     float32
-	decay  float32
+	Lr     float32
+	Decay  float32
 	L2     float32
 	// lowCap float32 // Removed: Unused
 	MomentumCoefficient float32 // Coefficient for momentum update (e.g., 0.9)
@@ -433,7 +433,7 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 			}
 
 			// After processing all samples in the mini-batch (either single or multi-threaded), apply the averaged gradients
-			nn.applyAveragedGradients(currentMiniBatchSize, nn.params.lr)
+			nn.applyAveragedGradients(currentMiniBatchSize, nn.params.Lr)
 
 			totalEpochLoss += miniBatchLoss
 			samplesProcessedInEpoch += currentMiniBatchSize
