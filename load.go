@@ -500,7 +500,11 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 	if *cpuprofile != "" {
-		f, _ := os.Create(*cpuprofile)
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating CPU profile file %s: %v\n", *cpuprofile, err)
+			os.Exit(1)
+		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
@@ -566,6 +570,7 @@ func main() {
 	initialL2 := float32(1e-4)
 	// initialLowCap := float32(0.0) // Removed
 	initialMomentum := float32(0.9)
+	fmt.Printf("Initial LR: %.5f, Decay: %.5f, L2: %.6f, Momentum: %.5f\n", initialLR, initialDecay, initialL2, initialMomentum)
 
 	baseNumWorkers := *flagWorkers // Use number of workers from command-line flag
 
