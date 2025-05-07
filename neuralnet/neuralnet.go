@@ -46,7 +46,7 @@ type Params struct {
         L2       float32
         lowCap   float32
         relu     float32
-        jacobian bool
+        // jacobian bool // Removed, no longer used
         bn float32
         MomentumCoefficient float32
 }
@@ -64,19 +64,19 @@ func CreateTask(data mat.VecDense, output mat.VecDense) Task {
 }
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
-        // Calls NewParamsFull, providing default values for relu, jacobian, momentum, and bn
+        // Calls NewParamsFull, providing default values for relu, momentum, and bn
         defaults := defaultParams()
-        return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.jacobian, defaults.MomentumCoefficient, defaults.bn)
+        return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.MomentumCoefficient, defaults.bn)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, jacobian bool, momentumCoefficient float32, bn float32) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, momentumCoefficient float32, bn float32) Params {
         return Params{
                 lr:                 learningRate,
                 decay:              decay,
                 L2:                 regularization,
                 lowCap:             cap,
                 relu:               relu,
-                jacobian:           jacobian,
+                // jacobian:           jacobian, // Removed
                 bn:                 bn,
                 MomentumCoefficient: momentumCoefficient,
             }
@@ -89,7 +89,7 @@ func defaultParams() *Params {
             L2:      1e-4, // Enabled L2 regularization
             lowCap:  0,
             relu:    0,
-            jacobian:false,
+            // jacobian:false, // Removed
             bn: 0.0,
             MomentumCoefficient: 0.9, // Default momentum coefficient
         }
