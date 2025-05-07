@@ -82,9 +82,8 @@ func defaultParams() *Params {
 		decay:  0.95, // Reduced decay rate
 		L2:     1e-4, // Enabled L2 regularization
 		lowCap: 0,
-		relu:   0,
-		// jacobian:false, // Removed
-		bn:                  0.0,
+		// relu field removed
+		// bn field removed
 		MomentumCoefficient: 0.9, // Default momentum coefficient
 	}
 }
@@ -92,8 +91,9 @@ func defaultParams() *Params {
 func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
 	params := defaultParams()
 	nn := initialise(inputSize, hidden, outputSize, *params)
-	nn.optimizer = &SGD{}             // Default optimizer
-	nn.lossFunction = &CrossEntropy{} // Default loss
+	// optimizer and lossFunction fields removed from NeuralNetwork struct
+	// nn.optimizer = &SGD{}             // Default optimizer - Removed
+	// nn.lossFunction = &CrossEntropy{} // Default loss - Removed
 	return nn
 }
 
