@@ -64,18 +64,18 @@ func NewParams(learningRate float32, decay float32, regularization float32) Para
 // NewParamsFull creates a Params struct with all fields specified.
 func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32) Params {
 	return Params{
-		lr:                  learningRate, // Use unexported field name
-		decay:               decay,        // Use unexported field name
-		L2:                  regularization, // Use unexported field name
+		Lr:                  learningRate, // Exported field name
+		Decay:               decay,        // Exported field name
+		L2:                  regularization, // Exported field name
 		MomentumCoefficient: momentumCoefficient,
 	}
 }
 
 func defaultParams() *Params {
 	return &Params{
-		lr:     0.01, // Use unexported field name
-		decay:  0.95, // Use unexported field name
-		L2:     1e-4, // Use unexported field name
+		Lr:     0.01, // Exported field name
+		Decay:  0.95, // Exported field name
+		L2:     1e-4, // Exported field name
 		MomentumCoefficient: 0.9,
 	}
 }
@@ -100,9 +100,9 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 	numHiddenLayers := len(hiddenConfig)
 	// Total processing layers = number of hidden layers + 1 output layer
 	nn := &NeuralNetwork{
-		layers: make([]*Layer, numHiddenLayers+1), // Use unexported field name
-		params: params,                            // Use unexported field name
-		input:  make([]float32, inputSize),        // Use unexported field name
+		Layers: make([]*Layer, numHiddenLayers+1), // Exported field name
+		Params: params,                            // Exported field name
+		Input:  make([]float32, inputSize),        // Exported field name
 	}
 
 	// Determine max size for prevLayerOutputsBuffer.
@@ -444,10 +444,10 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 			averageEpochLoss = totalEpochLoss / float32(samplesProcessedInEpoch)
 		}
 
-		fmt.Printf("Loss MiniBatch Epoch %d = %.2f (LR: %.5f)\n", e, averageEpochLoss, nn.params.lr) // Use unexported field name
+		fmt.Printf("Loss MiniBatch Epoch %d = %.2f (LR: %.5f)\n", e, averageEpochLoss, nn.Params.Lr) // Exported field name
 
 		// Apply learning rate decay at the end of each epoch.
-		nn.params.lr *= nn.params.decay // Use unexported field names
+		nn.Params.Lr *= nn.Params.Decay // Exported field names
 	} // End of epoch loop
 }
 
@@ -602,15 +602,15 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 {
 	}
 	// Calculate L2 regularization part
 	var reg64 float64 = 0.0
-	for _, layer := range nn.layers { // Use unexported field name
-		for _, neuron := range layer.neurons { // Use unexported field name
-			for _, w := range neuron.weights { // Use unexported field name
+	for _, layer := range nn.Layers { // Exported field name
+		for _, neuron := range layer.Neurons { // Exported field name
+			for _, w := range neuron.Weights { // Exported field name
 				reg64 += float64(w) * float64(w) // Sum of squared weights
 			}
 		}
 	}
 	// Add L2 penalty to the loss.
-	loss64 += 0.5 * float64(nn.params.L2) * reg64 // Use unexported field name
+	loss64 += 0.5 * float64(nn.Params.L2) * reg64 // Exported field name
 	loss = float32(loss64) // Cast final result back to float32
 
 	// Guard against NaN or Inf results, returning 0 loss in such cases.
