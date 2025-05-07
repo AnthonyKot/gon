@@ -427,7 +427,6 @@ func main() {
 
 	fmt.Printf("Total samples loaded: %d\n", len(inputs))
 
-	// Tanh works the best without Jacobian calculation
 	from := 0
 	to := from + 8000
 	epochs := 10
