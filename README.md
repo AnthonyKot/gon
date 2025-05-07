@@ -18,6 +18,9 @@ go build -o gon
 
 # Run with specific hyperparameters and profiling enabled
 ./gon -lr=0.005 -decay=0.98 -epochs=20 -batch=128 -workers=8 -cpuprofile=cpu.prof
+
+# Load a saved best model and evaluate
+./gon -load=best_model.json
 ```
 Flags:
 - `-lr`: Learning rate (default: 0.01)
@@ -26,6 +29,7 @@ Flags:
 - `-batch`: Mini-batch size (default: 64)
 - `-workers`: Number of parallel workers for training/accuracy (default: number of CPU cores)
 - `-cpuprofile`: File path to write CPU profile data (e.g., cpu.prof)
+- `-load`: Path to a saved model JSON file to load and run predictions
 
 ## Project Structure
 - load.go: Loads and preprocesses the CIFAR-10 dataset.
