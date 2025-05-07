@@ -205,38 +205,31 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 
 
 func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
-        // 1st layer update
-        for j, neuron := range nn.layers[0].neurons {
-                for k := range neuron.weights {
-                        grad := nn.layers[0].deltas[j] * nn.input[k]
-                        neuron.momentum[k] = 0.9 * neuron.momentum[k] + learningRate * grad
-                        neuron.weights[k] -= neuron.momentum[k]
-                        // regulisation term
-                        neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
-                        neuron.weights[k] = capValue(neuron.weights[k], nn.params)
-                    }
-        
-                    // Update bias: bias_new = bias_old + learningRate * delta
-                    neuron.bias -= learningRate * nn.layers[0].deltas[j] // Bias momentum can also be added if desired
-        }
-        
-        for i := 1; i < len(nn.layers); i++ {
-            currentLayer := nn.layers[i]
-            previousLayer := nn.layers[i-1]
-
-            for j, neuron := range currentLayer.neurons {
-                for k := range neuron.weights {
-                    grad := currentLayer.deltas[j] * previousLayer.neurons[k].output
-                    neuron.momentum[k] = 0.9 * neuron.momentum[k] + learningRate * grad
-                    neuron.weights[k] -= neuron.momentum[k]
-                    // regulisation term
-                    neuron.weights[k] -= nn.params.L2 * neuron.weights[k]
-                    neuron.weights[k] = capValue(neuron.weights[k], nn.params)
+        // Update weights and biases for all layers using computed deltas
+        for layerIndex, layer := range nn.layers {
+                var prevOutputs []float32
+                if layerIndex == 0 {
+                        prevOutputs = nn.input
+                } else {
+                        prevLayer := nn.layers[layerIndex-1]
+                        prevOutputs = make([]float32, len(prevLayer.neurons))
+                        for pIdx, pNeuron := range prevLayer.neurons {
+                                prevOutputs[pIdx] = pNeuron.output
+                        }
                 }
-    
-                // Update bias: bias_new = bias_old + learningRate * delta
-                neuron.bias -= learningRate * currentLayer.deltas[j] // Bias momentum can also be added if desired
-            }
+                for nIdx, neuron := range layer.neurons {
+                        delta := layer.deltas[nIdx]
+                        for wIdx := range neuron.weights {
+                                grad := delta * prevOutputs[wIdx]
+                                neuron.momentum[wIdx] = 0.9*neuron.momentum[wIdx] + learningRate*grad
+                                neuron.weights[wIdx] -= neuron.momentum[wIdx]
+                                // regularization term
+                                neuron.weights[wIdx] -= nn.params.L2 * neuron.weights[wIdx]
+                                neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
+                        }
+                        // Update bias
+                        neuron.bias -= learningRate * delta
+                }
         }
 }
 
