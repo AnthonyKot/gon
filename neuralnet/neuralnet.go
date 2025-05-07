@@ -171,12 +171,14 @@ func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params 
 
 // SetActivation function removed as unused.
 
-func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
-	// Convert input mat.VecDense to []float32 once and store in nn.input.
-	// nn.input slice is preallocated in initialise. This loop populates it.
-	for j := 0; j < input.Len(); j++ {
-		nn.input[j] = float32(input.AtVec(j))
+func (nn *NeuralNetwork) FeedForward(input []float32) {
+	// Input is now []float32. Copy it to nn.input if necessary.
+	// nn.input slice is preallocated in initialise.
+	if len(input) != len(nn.input) {
+		// This shouldn't happen if inputSize matches, but as a safeguard:
+		panic(fmt.Sprintf("FeedForward: input size %d does not match network input size %d", len(input), len(nn.input)))
 	}
+	copy(nn.input, input) // Copy input slice to internal buffer
 
 	// The first layer takes inputs as X from nn.input
 	for _, neuron := range nn.layers[0].neurons {
@@ -354,7 +356,7 @@ TrainMiniBatch processes the training data in mini-batches.
 - epochs: The total number of times to iterate over the entire dataset.
 - numWorkers: The number of goroutines to use for processing samples within a mini-batch. If <= 1, runs single-threaded.
 */
-func (nn *NeuralNetwork) TrainMiniBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchSize int, epochs int, numWorkers int) {
+func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutputs [][]float32, batchSize int, epochs int, numWorkers int) {
 	if numWorkers > MAX_WORKERS {
 		numWorkers = MAX_WORKERS
 	}
@@ -596,12 +598,14 @@ func (nn *NeuralNetwork) Output() []float32 {
 
 func (nn *NeuralNetwork) Predict(data []float32) int {
 	nn.FeedForward(data)
-	props := nn.calculateProps() // returns []float64
-	propsData := props.RawVector().Data // Get raw data
-	maxVal := propsData[0]              // Access raw data
+	propsData := nn.calculateProps() // returns []float64
+	if len(propsData) == 0 {
+		panic("Predict: calculateProps returned empty slice") // Or handle error appropriately
+	}
+	maxVal := propsData[0]
 	idx := 0
-	for i := 1; i < len(propsData); i++ { // Iterate using len of slice
-		val := propsData[i]             // Access raw data
+	for i := 1; i < len(propsData); i++ {
+		val := propsData[i]
 		if val > maxVal {
 			maxVal = val
 			idx = i
@@ -636,9 +640,12 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is 
 
 	// Use float64 for intermediate loss calculation
 	var loss64 float64
+	if len(propsData) != len(target) {
+		panic("calculateLoss: propsData and target length mismatch")
+	}
 	for i := 0; i < len(propsData); i++ {
-		p64 := math.Max(propsData[i], 1e-15) // propsData is already float64
-		loss64 -= targetData[i] * math.Log(p64) // targetData is already float64
+		p64 := math.Max(propsData[i], 1e-15)
+		loss64 -= float64(target[i]) * math.Log(p64) // Use target[i] directly
 	}
 	// L2 regularization: (lambda/2) * sum weights^2 (using float64)
 	var reg64 float64 = 0.0

@@ -140,21 +140,26 @@ func saveImg(ts [][][]float64, ls [][]float32, ws []string, sampleIdx int, predI
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	rows, cols := D, D // Assuming D=32
 	for y := 0; y < rows; y++ {
-		for x := 0; x < 32; x++ {
-			r := t[0].At(y, x)
+		for x := 0; x < cols; x++ {
+			// Access pixel data directly from slices
+			// Assuming t[0], t[1], t[2] are R, G, B channels flattened row-wise
+			pixelIndex := y*cols + x
+			r := t[0][pixelIndex]
 			r8 := uint8(r * 255.0)
-			g := t[1].At(y, x)
+			g := t[1][pixelIndex]
 			g8 := uint8(g * 255.0)
-			b := t[2].At(y, x)
+			b := t[2][pixelIndex]
 			b8 := uint8(b * 255.0)
 			img.Set(x, y, color.RGBA{r8, g8, b8, 255})
 		}
 	}
 	// Save the image to a PNG file
 	trueIdx := 0
-	for k := 0; k < ls[sampleIdx].Len(); k++ {
-		if ls[sampleIdx].AtVec(k) == 1.0 {
+	labelVec := ls[sampleIdx] // labelVec is []float32
+	for k := 0; k < len(labelVec); k++ {
+		if labelVec[k] == 1.0 {
 			trueIdx = k
+			break // Found the true label index
 		}
 	}
 
@@ -201,8 +206,8 @@ func oneHotEncode(labels []int, numClasses int) [][]float32 { // Return [][]floa
 }
 
 func description(encoded []float32, desc []string) string { // Input is []float32
-	for i := 0; i < encoded.Len(); i++ {
-		if encoded.AtVec(i) == 1.0 {
+	for i := 0; i < len(encoded); i++ { // Use len() for slice
+		if encoded[i] == 1.0 { // Access slice element directly
 			return desc[i]
 		}
 	}
