@@ -280,11 +280,11 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 	// Create a new neural network with the same structure
 	clone := &NeuralNetwork{
 		layers: make([]*Layer, len(nn.layers)),
-		params: original.params,
+		params: nn.params, // Corrected: use receiver nn
 	}
 
 	// Deep copy all layers
-	for i, layer := range original.layers {
+	for i, layer := range nn.layers { // Corrected: use receiver nn
 		cloneLayer := &Layer{
 			neurons:    make([]*Neuron, len(layer.neurons)),
 			activation: layer.activation,
