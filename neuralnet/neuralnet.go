@@ -239,9 +239,8 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 			// Update weights
 			if neuron.accumulatedWeightGradients != nil { // Check if initialized
 				for wIdx := range neuron.weights {
-					avgGrad := neuron.accumulatedWeightGradients[wIdx] / fBatchSize
-
 					// Add L2 regularization gradient component (using float64 intermediate)
+					// avgGrad variable removed as it was unused.
 					avgGrad64 := float64(neuron.accumulatedWeightGradients[wIdx])/float64(fBatchSize) + float64(nn.params.L2)*float64(neuron.weights[wIdx])
 
 					momentum64 := float64(nn.params.MomentumCoefficient)*float64(neuron.momentum[wIdx]) + float64(learningRate)*avgGrad64
