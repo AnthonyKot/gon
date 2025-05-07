@@ -428,11 +428,13 @@ func main() {
 	fmt.Printf("Mini-batch size: %d\n", miniBatchSize)
 	fmt.Println("---")
 
-	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
-	j := 0
-	numWorkers := runtime.NumCPU() // Use number of available CPUs for workers
-	if numWorkers > neuralnet.MAX_WORKERS {
-		numWorkers = neuralnet.MAX_WORKERS
+	// nn and j are no longer used directly in main after refactoring to runTrainingSession
+	// numWorkers is now initialized inside runTrainingSession or passed to it.
+	// The baseNumWorkers is now used for runTrainingSession.
+	// numWorkers := runtime.NumCPU() // This specific variable is no longer needed here.
+	// if numWorkers > neuralnet.MAX_WORKERS {
+	// 	numWorkers = neuralnet.MAX_WORKERS
+	// }
 	}
 	// Fetch default parameter values to use as base for both sessions
 	// We need a way to get these defaults. Let's assume neuralnet.DefaultParams() exists
