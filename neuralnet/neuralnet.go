@@ -164,10 +164,6 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
         }
         nn.layers[len(hidden) + 1] = output
 
-        nn.loss = make([]float32, outputSize)
-        for i := 0; i < outputSize; i++ {
-                nn.loss[i] = 0
-        }
 
         return nn
 }
@@ -319,10 +315,6 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
                 copy(clone.input, original.input)
         }
         
-        if original.loss != nil {
-                clone.loss = make([]float32, len(original.loss))
-                copy(clone.loss, original.loss)
-        }
         
         return clone
 }
@@ -336,7 +328,8 @@ func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
 // internal state from multiple goroutines without proper synchronization for those shared fields.
 // For safe concurrent training, TrainMiniBatchThreadSafe (which uses cloning) is recommended.
 func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-        for e := 0; e < epochs; e++ {
+        panic("TrainMiniBatchOriginal not implemented")
+}
                 var loss float32 = 0.0
                 var lossMutex sync.Mutex
                 start := time.Now()
@@ -394,7 +387,8 @@ func (nn *NeuralNetwork) TrainMiniBatchOriginal(trainingData []mat.VecDense, exp
  TODO: TrainMiniBatchThreadSafe is marked stub and not currently used.
 */
 func (nn *NeuralNetwork) TrainMiniBatchThreadSafe(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, batchRatio int, epochs int) {
-        for e := 0; e < epochs; e++ {
+        panic("TrainMiniBatchThreadSafe not implemented")
+}
                 var totalLoss float32 = 0.0
                 var totalLossMutex sync.Mutex
                 start := time.Now()
