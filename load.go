@@ -280,7 +280,7 @@ func accuracy(nn *neuralnet.NeuralNetwork, trainingData []mat.VecDense, expected
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 func runTrainingSession(
-	useFloat64Calc bool,
+	// useFloat64Calc bool, // Parameter removed
 	inputs []mat.VecDense,
 	labels []mat.VecDense,
 	imgs [][]mat.Dense,
@@ -299,10 +299,10 @@ func runTrainingSession(
 	initialMomentum float32,
 	initialBN float32,
 ) {
-	fmt.Printf("\n--- Starting Training Session (UseFloat64 for Calculations: %t) ---\n", useFloat64Calc)
+	fmt.Printf("\n--- Starting Training Session (Calculations use float64 internally) ---\n")
 
 	// Create Params for this session
-	// Note: NewParamsFull now correctly includes the useFloat64 flag
+	// NewParamsFull no longer takes useFloat64Calc
 	currentParams := neuralnet.NewParamsFull(
 		initialLR,
 		initialDecay,
@@ -310,8 +310,7 @@ func runTrainingSession(
 		initialLowCap,
 		initialRelu,
 		initialMomentum,
-		initialBN,    // bn
-		useFloat64Calc, // UseFloat64
+		initialBN, // bn
 	)
 
 	nn := neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, currentParams)
@@ -369,8 +368,8 @@ func runTrainingSession(
 		averageEpochDuration = totalEpochsDuration / time.Duration(epochs)
 	}
 	fmt.Println("---")
-	fmt.Printf("Total training duration for session (UseFloat64: %t): %s\n", useFloat64Calc, totalTrainingDuration)
-	fmt.Printf("Average epoch duration for session (UseFloat64: %t): %s\n", useFloat64Calc, averageEpochDuration)
+	fmt.Printf("Total training duration for session: %s\n", totalTrainingDuration)
+	fmt.Printf("Average epoch duration for session: %s\n", averageEpochDuration)
 	fmt.Println("---")
 }
 
@@ -450,17 +449,8 @@ func main() {
 
 	baseNumWorkers := runtime.NumCPU() // Use number of available CPUs for workers
 
-	// Run session with UseFloat64 = false
+	// Run a single training session (UseFloat64 flag is now removed)
 	runTrainingSession(
-		false, // useFloat64Calc
-		inputs, labels, imgs, descr,
-		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
-		initialLR, initialDecay, initialL2, initialLowCap, initialRelu, initialMomentum, initialBN,
-	)
-
-	// Run session with UseFloat64 = true
-	runTrainingSession(
-		true, // useFloat64Calc
 		inputs, labels, imgs, descr,
 		from, to, epochs, train_to_validation, miniBatchSize, baseNumWorkers,
 		initialLR, initialDecay, initialL2, initialLowCap, initialRelu, initialMomentum, initialBN,

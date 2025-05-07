@@ -53,7 +53,7 @@ type Params struct {
 	// jacobian bool // Removed, no longer used
 	bn                  float32
 	MomentumCoefficient float32
-	UseFloat64          bool // If true, use float64 for intermediate calculations
+	// UseFloat64          bool // Removed: Calculations will consistently use float64 internally
 }
 
 type Task struct {
@@ -69,12 +69,12 @@ func CreateTask(data mat.VecDense, output mat.VecDense) Task {
 }
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
-	// Calls NewParamsFull, providing default values for relu, momentum, bn, and UseFloat64
+	// Calls NewParamsFull, providing default values for relu, momentum, and bn
 	defaults := defaultParams()
-	return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.MomentumCoefficient, defaults.bn, defaults.UseFloat64)
+	return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.MomentumCoefficient, defaults.bn)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, momentumCoefficient float32, bn float32, useFloat64 bool) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, momentumCoefficient float32, bn float32) Params {
 	return Params{
 		lr:                  learningRate,
 		decay:               decay,
@@ -83,7 +83,7 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
 		relu:                relu,
 		bn:                  bn,
 		MomentumCoefficient: momentumCoefficient,
-		UseFloat64:          useFloat64,
+		// UseFloat64 field removed
 	}
 }
 

@@ -3,21 +3,17 @@ package neuralnet
 import "math"
 
 type ActivationFunction interface {
-	Activate(x float32, useFloat64 bool) float32
-	Derivative(x float32, useFloat64 bool) float32
+	Activate(x float32) float32
+	Derivative(x float32) float32
 }
 
 type ReLU struct{}
 
-func (r ReLU) Activate(x float32, useFloat64 bool) float32 {
-	// math.Max operates on float64, so the core logic doesn't change with useFloat64.
-	// The input x is float32, so it's always cast to float64 for math.Max.
+func (r ReLU) Activate(x float32) float32 {
 	return float32(math.Max(float64(x), 0.0))
 }
 
-func (r ReLU) Derivative(x float32, useFloat64 bool) float32 {
-	// The logic for ReLU derivative is direct and doesn't involve float64-specific math functions
-	// that would change based on useFloat64, other than the signature.
+func (r ReLU) Derivative(x float32) float32 {
 	if x > 0 {
 		return 1
 	}
@@ -32,18 +28,14 @@ func NewLeakyReLU(alpha float32) LeakyReLU {
 	return LeakyReLU{alpha: alpha}
 }
 
-func (l LeakyReLU) Activate(x float32, useFloat64 bool) float32 {
+func (l LeakyReLU) Activate(x float32) float32 {
 	if x > 0 {
 		return x
 	}
-	if useFloat64 {
-		return float32(float64(l.alpha) * float64(x))
-	}
-	return l.alpha * x
+	return float32(float64(l.alpha) * float64(x))
 }
 
-func (l LeakyReLU) Derivative(x float32, useFloat64 bool) float32 {
-	// The logic for LeakyReLU derivative is direct.
+func (l LeakyReLU) Derivative(x float32) float32 {
 	if x > 0 {
 		return 1
 	}
@@ -52,44 +44,32 @@ func (l LeakyReLU) Derivative(x float32, useFloat64 bool) float32 {
 
 type Sigmoid struct{}
 
-func (s Sigmoid) Activate(x float32, useFloat64 bool) float32 {
-	if useFloat64 {
-		return float32(1.0 / (1.0 + math.Exp(-float64(x))))
-	}
-	return 1.0 / (1.0 + float32(math.Exp(-float64(x))))
+func (s Sigmoid) Activate(x float32) float32 {
+	return float32(1.0 / (1.0 + math.Exp(-float64(x))))
 }
 
-func (s Sigmoid) Derivative(x float32, useFloat64 bool) float32 {
-	sigmoidVal := s.Activate(x, useFloat64) // Call updated Activate
-	if useFloat64 {
-		return float32(float64(sigmoidVal) * (1.0 - float64(sigmoidVal)))
-	}
-	return sigmoidVal * (1.0 - sigmoidVal)
+func (s Sigmoid) Derivative(x float32) float32 {
+	sigmoidVal := s.Activate(x) // Call updated Activate
+	return float32(float64(sigmoidVal) * (1.0 - float64(sigmoidVal)))
 }
 
 type Tanh struct{}
 
-func (t Tanh) Activate(x float32, useFloat64 bool) float32 {
-	// math.Tanh operates on float64.
+func (t Tanh) Activate(x float32) float32 {
 	return float32(math.Tanh(float64(x)))
 }
 
-func (t Tanh) Derivative(x float32, useFloat64 bool) float32 {
-	tanhVal := t.Activate(x, useFloat64) // Call updated Activate
-	if useFloat64 {
-		return float32(1.0 - float64(tanhVal)*float64(tanhVal))
-	}
-	return 1.0 - tanhVal*tanhVal
+func (t Tanh) Derivative(x float32) float32 {
+	tanhVal := t.Activate(x) // Call updated Activate
+	return float32(1.0 - float64(tanhVal)*float64(tanhVal))
 }
 
 type Linear struct{}
 
-func (t Linear) Activate(x float32, useFloat64 bool) float32 {
-	// Linear activation is direct, no change in logic for useFloat64.
+func (t Linear) Activate(x float32) float32 {
 	return x
 }
 
-func (t Linear) Derivative(x float32, useFloat64 bool) float32 {
-	// Linear derivative is constant, no change in logic for useFloat64.
+func (t Linear) Derivative(x float32) float32 {
 	return 1
 }
