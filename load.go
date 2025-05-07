@@ -456,33 +456,5 @@ func main() {
 		initialLR, initialDecay, initialL2, initialLowCap, initialRelu, initialMomentum, initialBN,
 	)
 
-	// Original commented out code
-	// j := 0 // This j would be uninitialized if only runTrainingSession is called.
-	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
-	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 100, 1)
-	// j = to + rand.Intn(to - from / 2)
-	// saveImg(imgs, labels, descr, j, nn.Predict(inputs[j]))
-	// nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1000, 1)
-
-	// nn = neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr * 10, L2 * 10)
-	// for i := 0; i < epochs; i++ {
-	// 	nn.TrainMiniBatch(inputs[from:to], labels[from:to], 1)
-	// 	fmt.Println("train", accuracy(nn, inputs, labels, from, to))
-	// 	fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/2)))
-	// 	fmt.Println()
-	// }
-	// nn = neuralnet.NewNeuralNetwork(1024, []int{512, 256}, 10, lr * 100, L2 * 100)
-	// for i := 0; i < epochs; i++ {
-	// 	nn.TrainBatch(inputs[from:to], labels[from:to], 1)
-	// 	fmt.Println("train", accuracy(nn, inputs, labels, from, to))
-	// 	fmt.Println("validation", accuracy(nn, inputs, labels, to, to + ((to - from)/2)))
-	// 	fmt.Println()
-	// }
-	// profiling top 5
-	// flat  flat%   sum%        cum   cum%
-	// 24.42% (*NeuralNetwork).UpdateWeights
-	// 20.00% gon/neuralnet.ConvertWeightsDense
-	// 17.37% gon/neuralnet.(*NeuralNetwork).CalculateLoss
-	// 11.85% gonum.org/v1/gonum/mat.(*VecDense).at (inline)
-	// 11.51% gon/neuralnet.(*NeuralNetwork).FeedForward
+	// End of main function
 }

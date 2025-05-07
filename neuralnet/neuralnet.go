@@ -52,39 +52,27 @@ type Params struct {
 	lowCap float32
 	relu   float32
 	// jacobian bool // Removed, no longer used
-	bn                  float32
+	// bn                  float32 // Removed: Unused
 	MomentumCoefficient float32
-	// UseFloat64          bool // Removed: Calculations will consistently use float64 internally
 }
 
-type Task struct {
-	data   mat.VecDense
-	output mat.VecDense
-}
-
-func CreateTask(data mat.VecDense, output mat.VecDense) Task {
-	return Task{
-		data:   data,
-		output: output,
-	}
-}
+// Task struct and CreateTask function removed as unused.
 
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
-	// Calls NewParamsFull, providing default values for relu, momentum, and bn
+	// Calls NewParamsFull, providing default values for momentum
 	defaults := defaultParams()
-	return NewParamsFull(learningRate, decay, regularization, cap, defaults.relu, defaults.MomentumCoefficient, defaults.bn)
+	return NewParamsFull(learningRate, decay, regularization, cap, defaults.MomentumCoefficient)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, relu float32, momentumCoefficient float32, bn float32) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, momentumCoefficient float32) Params {
 	return Params{
 		lr:                  learningRate,
 		decay:               decay,
 		L2:                  regularization,
 		lowCap:              cap,
-		relu:                relu,
-		bn:                  bn,
+		// relu field removed
+		// bn field removed
 		MomentumCoefficient: momentumCoefficient,
-		// UseFloat64 field removed
 	}
 }
 
@@ -192,9 +180,7 @@ func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params 
 	return initialise(inputSize, hiddenConfig, outputSize, params)
 }
 
-func (nn *NeuralNetwork) SetActivation(layerIndex int, activation ActivationFunction) {
-	nn.layers[layerIndex].activation = activation
-}
+// SetActivation function removed as unused.
 
 func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
 	// Convert input mat.VecDense to []float32 once and store in nn.input.
@@ -550,18 +536,14 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 		}
 
 		for j, neuron := range layer.neurons { // For each neuron 'j' in current layer 'i'
-			var errorSumTimesWeight float32 = 0.0
+			// Removed redundant float32 errorSumTimesWeight calculation loop.
+			// Calculate error sum using float64 directly.
+			var errorSumTimesWeight64 float64 = 0.0
 			// Sum (delta_k_nextLayer * weight_kj_nextLayer)
 			for k, nextNeuron := range nextLayer.neurons { // For each neuron 'k' in next layer 'i+1'
-				// nextNeuron.weights[j] is the weight connecting neuron 'j' (current layer) to neuron 'k' (next layer)
-				errorSumTimesWeight += nextNeuron.weights[j] * nextLayer.deltas[k]
-			}
-			// Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
-			// Use float64 for intermediate sum
-			var errorSumTimesWeight64 float64
-			for k, nextNeuron := range nextLayer.neurons {
 				errorSumTimesWeight64 += float64(nextNeuron.weights[j]) * float64(nextLayer.deltas[k])
 			}
+			// Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
 			derivative := layer.activation.Derivative(neuron.output) // Removed UseFloat64 flag
 			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative)), nn.params)
 		}
@@ -605,38 +587,7 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample mat.VecD
 	return loss
 }
 
-func (nn *NeuralNetwork) TrainBatch(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, epochs int) {
-	numSamples := len(trainingData)
-	if numSamples == 0 {
-		fmt.Println("TrainBatch: No training data provided.")
-		return
-	}
-
-	for e := 0; e < epochs; e++ {
-		nn.zeroAccumulatedGradients() // Zero out accumulators at the start of each epoch
-		var totalEpochLoss float32 = 0.0
-
-		// Shuffle data for each epoch
-		permutation := rand.Perm(numSamples)
-
-		for _, idx := range permutation { // Iterate through shuffled samples
-			dataSample := trainingData[idx]
-			labelSample := expectedOutputs[idx]
-
-			sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
-			totalEpochLoss += sampleLoss
-		}
-
-		// After processing all samples in the batch, apply the averaged gradients
-		nn.applyAveragedGradients(numSamples, nn.params.lr)
-
-		averageLoss := totalEpochLoss / float32(numSamples)
-		fmt.Printf("Loss Batch %d = %.2f\n", e, averageLoss)
-
-		// Apply learning rate decay
-		nn.params.lr *= nn.params.decay
-	}
-}
+// TrainBatch function removed as unused (superseded by TrainMiniBatch).
 
 func (nn *NeuralNetwork) Output() []float32 {
 	outputLayer := nn.layers[len(nn.layers)-1].neurons
@@ -711,27 +662,9 @@ func (nn *NeuralNetwork) calculateLoss(target mat.VecDense) float32 {
 	return loss
 }
 
-func convertWeightsDense(neurons []*Neuron) *mat.Dense {
-	n := len(neurons)
-	m := len(neurons[0].weights)
-	weights := make([]float64, n*m)
+// convertWeightsDense function removed as unused.
 
-	for j, _ := range neurons[0].weights {
-		for i, neuron := range neurons {
-			weights[i*m+j] = float64(neuron.weights[j])
-		}
-	}
-
-	return mat.NewDense(n, m, weights)
-}
-
-func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
-	dense := mat.NewVecDense(len(neurons), nil)
-	for i, neuron := range neurons {
-		dense.SetVec(i, float64(neuron.bias))
-	}
-	return dense
-}
+// convertBiasToDense function removed as unused.
 
 
 // stableSoftmax computes softmax in a numerically stable way.
@@ -847,25 +780,7 @@ func capValue(value float32, params Params) float32 {
 	return sign * cappedAbsVal
 }
 
-func selectSamples(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, samples int) ([]mat.VecDense, []mat.VecDense) {
-	selectedIndices := make(map[int]bool)
-	for len(selectedIndices) < samples {
-		randomIndex := rand.Intn(len(trainingData))
-		if !selectedIndices[randomIndex] {
-			selectedIndices[randomIndex] = true
-		}
-	}
-	selectedInputs := make([]mat.VecDense, samples)
-	selectedLabels := make([]mat.VecDense, samples)
-	// Iterate over selected indices and copy corresponding elements
-	i := 0
-	for index := range selectedIndices {
-		selectedInputs[i] = trainingData[index]
-		selectedLabels[i] = expectedOutputs[index]
-		i++
-	}
-	return selectedInputs, selectedLabels
-}
+// selectSamples function removed as unused.
 
 func (nn *NeuralNetwork) Save(filename string) {
 	file, err := os.Create(filename)
