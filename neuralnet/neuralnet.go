@@ -112,7 +112,7 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
 
         first := &Layer{
                 neurons: make([]*Neuron, hidden[0]),
-                activation: Linear{},
+                activation: ReLU{}, // Changed to ReLU for the first hidden layer
         }
         for j := range first.neurons {
                 first.neurons[j] = &Neuron{
@@ -138,15 +138,18 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                         out = outputSize
                 }
                 for j := range layer.neurons {
+                        prevLayerSize := len(nn.layers[i].neurons) // Number of neurons in the previous layer
+                        currentLayerSize := size                   // Number of neurons in the current layer (size)
                         layer.neurons[j] = &Neuron{
-                                weights: make([]float32, len(nn.layers[i].neurons)),
-                                bias:    xavierInit(len(nn.layers[i].neurons), out, nn.params),
+                                weights: make([]float32, prevLayerSize),
+                                bias:    xavierInit(prevLayerSize, currentLayerSize, nn.params), // Bias for current neuron
                         }
                         // TODO: use gauss to init weights
                         for k := range layer.neurons[j].weights {
-                                layer.neurons[j].weights[k] =  xavierInit(size, out, nn.params)
+                                // Weights connect previous layer to current layer's neurons
+                                layer.neurons[j].weights[k] =  xavierInit(prevLayerSize, currentLayerSize, nn.params)
                         }
-                        layer.neurons[j].momentum = make([]float32, len(nn.layers[i].neurons))
+                        layer.neurons[j].momentum = make([]float32, prevLayerSize)
 
                 }
                 nn.layers[i + 1] = layer
@@ -161,10 +164,11 @@ func initialise(inputSize int, hidden []int, outputSize int, params Params) *Neu
                         bias:    0,
                 }
                 // TODO: use gauss to init weights
+                lastHiddenLayerSize := len(nn.layers[len(nn.layers) - 2].neurons)
                 for k := range output.neurons[l].weights {
-                        output.neurons[l].weights[k] = xavierInit(outputSize, outputSize, nn.params)
+                        output.neurons[l].weights[k] = xavierInit(lastHiddenLayerSize, outputSize, nn.params)
                 }
-                output.neurons[l].momentum = make([]float32, len(nn.layers[len(nn.layers) - 2].neurons))
+                output.neurons[l].momentum = make([]float32, lastHiddenLayerSize)
         }
         nn.layers[len(hidden) + 1] = output
 
