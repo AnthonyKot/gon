@@ -207,72 +207,83 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
                 }
         }
 }
-
-
-
-func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
-        // Update weights and biases for all layers using computed deltas
-        for layerIndex, layer := range nn.layers {
-                var prevOutputs []float32
-                if layerIndex == 0 {
-                        prevOutputs = nn.input
-                } else {
-                        prevLayer := nn.layers[layerIndex-1]
-                        prevOutputs = make([]float32, len(prevLayer.neurons))
-                        for pIdx, pNeuron := range prevLayer.neurons {
-                                prevOutputs[pIdx] = pNeuron.output
-                        }
-                }
-                for nIdx, neuron := range layer.neurons {
-                        delta := layer.deltas[nIdx]
-                        for wIdx := range neuron.weights {
-                                grad := delta * prevOutputs[wIdx]
-                                // Add L2 regularization gradient component
-                                grad += nn.params.L2 * neuron.weights[wIdx]
-                                
-                                neuron.momentum[wIdx] = 0.9*neuron.momentum[wIdx] + learningRate*grad
-                                neuron.weights[wIdx] -= neuron.momentum[wIdx]
-                                // capValue is applied to weights after update
-                                neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
-                        }
-                        // Update bias
-                        neuron.bias -= learningRate * delta
-                }
-        }
-}
-
-func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense,  epochs int) {
-        // Standard SGD processes one sample at a time, so batchSize is effectively 1.
-        // The variable itself was unused.
-        for e := 0; e < epochs; e++ {
-                var totalEpochLoss float32 = 0.0
-                // Create a permutation of indices to shuffle the training data for each epoch
-                permutation := rand.Perm(len(trainingData))
-
-                for _, idx := range permutation {
-                        dataSample := trainingData[idx]
-                        labelSample := expectedOutputs[idx]
+    
+// applyAveragedGradients updates the network's weights and biases using accumulated gradients.
+// It should be called after processing a batch and accumulating gradients.
+func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate float32) {
+    if batchSize == 0 {
+        // Avoid division by zero if training data is empty
+        fmt.Println("applyAveragedGradients: batchSize is zero, skipping updates.")
+        return
+    }
+    fBatchSize := float32(batchSize)
+    
+    for _, layer := range nn.layers {
+        for _, neuron := range layer.neurons {
+            // Update weights
+            if neuron.accumulatedWeightGradients != nil { // Check if initialized
+                for wIdx := range neuron.weights {
+                    avgGrad := neuron.accumulatedWeightGradients[wIdx] / fBatchSize
                         
-                        nn.FeedForward(dataSample)
-                        // Compute error vector: softmax - target
-                        props := nn.calculateProps()
-                        errVec := mat.NewVecDense(props.Len(), nil)
-                        errVec.SubVec(props, &labelSample)
-                        totalEpochLoss += nn.calculateLoss(labelSample) // Sums individual sample losses for reporting
-                        nn.Backpropagate([]mat.VecDense{*errVec}) // Backpropagate and update weights for this single sample
+                    // Add L2 regularization gradient component
+                    avgGrad += nn.params.L2 * neuron.weights[wIdx]
+                        
+                    neuron.momentum[wIdx] = 0.9*neuron.momentum[wIdx] + learningRate*avgGrad
+                    neuron.weights[wIdx] -= neuron.momentum[wIdx]
+                    neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
                 }
+            }
                 
-                // Apply learning rate decay once per epoch
-                nn.params.lr *= nn.params.decay 
-                
-                if len(trainingData) > 0 {
-                    fmt.Println(fmt.Sprintf("Loss SGD %d = %.2f", e, totalEpochLoss / float32(len(trainingData))))
-                } else {
-                    fmt.Println(fmt.Sprintf("Loss SGD %d = %.2f (No training data)", e, 0.0))
-                }
+            // Update bias
+            avgBiasGrad := neuron.accumulatedBiasGradient / fBatchSize
+            neuron.bias -= learningRate * avgBiasGrad
+            neuron.bias = capValue(neuron.bias, nn.params)
         }
+    }
 }
-
+    
+// The old UpdateWeights function is now replaced by applyAveragedGradients 
+// and the gradient accumulation logic within backpropagateAndAccumulateForSample.
+    
+// TrainSGD is updated to use the new gradient accumulation and application mechanism.
+// For SGD, the "batch size" is 1 for gradient application.
+func (nn *NeuralNetwork) TrainSGD(trainingData []mat.VecDense, expectedOutputs []mat.VecDense, epochs int) {
+    numSamples := len(trainingData)
+    if numSamples == 0 {
+        fmt.Println("TrainSGD: No training data provided.")
+        return
+    }
+    
+    for e := 0; e < epochs; e++ {
+        var totalEpochLoss float32 = 0.0
+        permutation := rand.Perm(numSamples) // Shuffle data for each epoch
+    
+        for _, idx := range permutation { // Iterate through shuffled samples
+            dataSample := trainingData[idx]
+            labelSample := expectedOutputs[idx]
+    
+            // For SGD, gradients are calculated and applied for each sample individually.
+            nn.zeroAccumulatedGradients() // Zero out before processing the single sample
+                
+            sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
+            totalEpochLoss += sampleLoss
+                
+            // Apply gradients for this single sample (effective batchSize=1)
+            nn.applyAveragedGradients(1, nn.params.lr) 
+        }
+            
+        // Apply learning rate decay once per epoch
+        nn.params.lr *= nn.params.decay 
+            
+        if numSamples > 0 {
+            averageLoss := totalEpochLoss / float32(numSamples)
+            fmt.Printf("Loss SGD %d = %.2f\n", e, averageLoss)
+        } else {
+             fmt.Printf("Loss SGD %d = 0.00 (No samples processed)\n", e)
+        }
+    }
+}
+    
 // Clone a neural network for thread-safe parallel processing
 func cloneNeuralNetwork(original *NeuralNetwork) *NeuralNetwork {
         // Create a new neural network with the same structure
