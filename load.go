@@ -346,7 +346,7 @@ func runTrainingSession(
 		initialLR,
 		initialDecay,
 		initialL2,
-		initialLowCap,
+		// initialLowCap, // Removed
 		initialMomentum,
 	)
 
@@ -474,7 +474,7 @@ func main() {
 	initialLR := float32(*flagLR)
 	initialDecay := float32(*flagDecay)
 	initialL2 := float32(1e-4)
-	initialLowCap := float32(0.0)
+	// initialLowCap := float32(0.0) // Removed
 	initialMomentum := float32(0.9)
 
 	baseNumWorkers := *flagWorkers // Use number of workers from command-line flag
@@ -483,7 +483,7 @@ func main() {
 	runTrainingSession(
 		inputs, labels, imgs, descr,
 		from, to, epochs, miniBatchSize, baseNumWorkers,
-		initialLR, initialDecay, initialL2, initialLowCap, initialMomentum,
+		initialLR, initialDecay, initialL2, /*initialLowCap,*/ initialMomentum,
 	)
 
 	// End of main function

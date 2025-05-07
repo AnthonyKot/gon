@@ -47,7 +47,7 @@ type Params struct {
 	lr     float32
 	decay  float32
 	L2     float32
-	lowCap float32
+	// lowCap float32 // Removed: Unused
 	MomentumCoefficient float32
 }
 
@@ -56,15 +56,15 @@ type Params struct {
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
 	// Calls NewParamsFull, providing default values for momentum
 	defaults := defaultParams()
-	return NewParamsFull(learningRate, decay, regularization, cap, defaults.MomentumCoefficient)
+	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient)
 }
 
-func NewParamsFull(learningRate float32, decay float32, regularization float32, cap float32, momentumCoefficient float32) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32) Params {
 	return Params{
 		lr:                  learningRate,
 		decay:               decay,
 		L2:                  regularization,
-		lowCap:              cap,
+		// lowCap:              cap, // Removed
 		MomentumCoefficient: momentumCoefficient,
 	}
 }
@@ -74,7 +74,7 @@ func defaultParams() *Params {
 		lr:     0.01,
 		decay:  0.95, // Reduced decay rate
 		L2:     1e-4, // Enabled L2 regularization
-		lowCap: 0,
+		// lowCap: 0, // Removed
 		MomentumCoefficient: 0.9, // Default momentum coefficient
 	}
 }
@@ -200,7 +200,7 @@ func (nn *NeuralNetwork) FeedForward(input []float32) {
 			}
 			neuron.output = float32(sum64)
 			neuron.output = nn.layers[i].activation.Activate(neuron.output)
-			neuron.output = capValue(neuron.output, nn.params)
+			neuron.output = capValue(neuron.output)
 		}
 	}
 }
@@ -227,14 +227,14 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 					momentum64 := float64(nn.params.MomentumCoefficient)*float64(neuron.momentum[wIdx]) + float64(learningRate)*avgGrad64
 					neuron.momentum[wIdx] = float32(momentum64)
 					neuron.weights[wIdx] = float32(float64(neuron.weights[wIdx]) - momentum64) // Update using float64 intermediate
-					neuron.weights[wIdx] = capValue(neuron.weights[wIdx], nn.params)
+					neuron.weights[wIdx] = capValue(neuron.weights[wIdx])
 				}
 			}
 
 			// Update bias (using float64 intermediate)
 			avgBiasGrad64 := float64(neuron.accumulatedBiasGradient) / float64(fBatchSize)
 			neuron.bias = float32(float64(neuron.bias) - float64(learningRate)*avgBiasGrad64)
-			neuron.bias = capValue(neuron.bias, nn.params)
+			neuron.bias = capValue(neuron.bias)
 		}
 	}
 }
@@ -522,7 +522,7 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 	// Use the errVecData slice calculated earlier in this function.
 	for j := 0; j < len(outputLayer.neurons); j++ {
 		// For a single sample, the delta is the error component (softmax_output - target_j).
-		outputLayer.deltas[j] = capValue(float32(errVecData[j]), nn.params) // Use errVecData calculated above
+		outputLayer.deltas[j] = capValue(float32(errVecData[j])) // Use errVecData calculated above
 	}
 
 	// Propagate deltas backward through hidden layers
@@ -544,7 +544,7 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 			}
 			// Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
 			derivative := layer.activation.Derivative(neuron.output) // Removed UseFloat64 flag
-			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative)), nn.params)
+			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative)))
 		}
 	}
 
@@ -625,7 +625,7 @@ func (nn *NeuralNetwork) calculateProps() []float64 { // Return []float64
 	softmax := softmax(output, nn.params)
 	softmaxFloat64 := make([]float64, len(softmax))
 	for i, v := range softmax {
-		v = capValue(v, nn.params)
+		v = capValue(v)
 		softmaxFloat64[i] = float64(v)
 	}
 	return softmaxFloat64 // Return the slice directly
@@ -716,9 +716,9 @@ func softmax(output []float32, params Params) []float32 {
 
 	// Apply capValue to the results. With default params (lowCap=0),
 	// this primarily handles any residual NaNs by converting them to 0.
-	// If lowCap is non-zero, it will enforce min/max probability magnitudes.
+	// If lowCap were non-zero, it would enforce min/max probability magnitudes.
 	for i, v := range stableOutput {
-		stableOutput[i] = capValue(v, params)
+		stableOutput[i] = capValue(v)
 	}
 	return stableOutput
 }
@@ -726,12 +726,12 @@ func softmax(output []float32, params Params) []float32 {
 func xavierInit(numInputs int, numOutputs int, params Params) float32 {
 	limit := math.Sqrt(6.0 / float64(numInputs+numOutputs))
 	xavier := float32(2*rand.Float64()*limit - limit)
-	return capValue(xavier, params)
+	return capValue(xavier)
 }
 
-func capValue(value float32, params Params) float32 {
+func capValue(value float32) float32 {
 	if math.IsNaN(float64(value)) {
-		return params.lowCap
+		return 0.0 // Directly return 0 for NaN, as lowCap was always 0
 	}
 	if math.IsInf(float64(value), 1) { // +Inf
 		return DefaultMaxAbsValue
