@@ -264,11 +264,21 @@ func main() {
 	inputs = shuffledInputs
 	labels = shuffledLabels
 
+	fmt.Printf("Total samples loaded: %d\n", len(inputs))
+
 	// Tanh works the best without Jacobian calculation
 	from := 0
 	to := from + 8000
 	epochs := 10
 	train_to_validation := 4
+
+	trainingSetSize := to - from
+	validationSetSize := (to - from) / train_to_validation
+	fmt.Printf("Training set size: %d samples\n", trainingSetSize)
+	fmt.Printf("Validation set size: %d samples\n", validationSetSize)
+	fmt.Printf("Number of main epochs: %d\n", epochs)
+	fmt.Printf("Samples processed per call to nn.TrainBatch (effectively the batch size for gradient update): %d\n", trainingSetSize)
+	fmt.Println("---")
 
 	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
 	j := 0
