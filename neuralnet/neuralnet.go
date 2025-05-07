@@ -518,10 +518,11 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 	if outputLayer.deltas == nil || len(outputLayer.deltas) != len(outputLayer.neurons) {
 		outputLayer.deltas = make([]float32, len(outputLayer.neurons))
 	}
-	errVecData := errVec.RawVector().Data // Get raw data from errVec
+	// Removed incorrect line: errVecData := errVec.RawVector().Data
+	// Use the errVecData slice calculated earlier in this function.
 	for j := 0; j < len(outputLayer.neurons); j++ {
 		// For a single sample, the delta is the error component (softmax_output - target_j).
-		outputLayer.deltas[j] = capValue(float32(errVecData[j]), nn.params) // Use raw data
+		outputLayer.deltas[j] = capValue(float32(errVecData[j]), nn.params) // Use errVecData calculated above
 	}
 
 	// Propagate deltas backward through hidden layers
