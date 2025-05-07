@@ -486,7 +486,8 @@ func runTrainingSession(
 
 			pred := nn.Predict(inputs[j])
 			saveImg(imgs, labels, descr, j, pred)
-			fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
+			// Removed raw output printout for cleaner logs.
+			// fmt.Printf("Epoch %d, Sample %d, Output: %v\n", i, sample, nn.Output())
 		}
 		trainAcc := accuracy(nn, inputs, labels, from, to, numWorkers)
 		valAcc := accuracy(nn, inputs, labels, to, len(inputs), numWorkers) // Use full remaining data for validation
