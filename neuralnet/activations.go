@@ -7,6 +7,8 @@ type ActivationFunction interface {
 	Derivative(x float32) float32
 }
 
+// ReLU (Rectified Linear Unit) activation function.
+// Returns max(0, x). Commonly used in hidden layers for its simplicity and effectiveness.
 type ReLU struct{}
 
 func (r ReLU) Activate(x float32) float32 {
@@ -20,8 +22,10 @@ func (r ReLU) Derivative(x float32) float32 {
 	return 0
 }
 
+// LeakyReLU is a variant of ReLU that allows a small, non-zero gradient (slope `alpha`) when the unit is not active (x < 0).
+// Helps mitigate the "dying ReLU" problem.
 type LeakyReLU struct {
-	alpha float32
+	alpha float32 // Slope for negative inputs (e.g., 0.01 or 0.1).
 }
 
 func NewLeakyReLU(alpha float32) LeakyReLU {
@@ -42,6 +46,9 @@ func (l LeakyReLU) Derivative(x float32) float32 {
 	return l.alpha
 }
 
+// Sigmoid activation function.
+// Squashes values into the range (0, 1). Historically used in hidden layers, but less common now due to vanishing gradients.
+// Sometimes used in output layers for binary classification probabilities.
 type Sigmoid struct{}
 
 func (s Sigmoid) Activate(x float32) float32 {
@@ -53,6 +60,8 @@ func (s Sigmoid) Derivative(x float32) float32 {
 	return float32(float64(sigmoidVal) * (1.0 - float64(sigmoidVal)))
 }
 
+// Tanh (Hyperbolic Tangent) activation function.
+// Squashes values into the range (-1, 1). Being zero-centered can sometimes help learning compared to Sigmoid.
 type Tanh struct{}
 
 func (t Tanh) Activate(x float32) float32 {
@@ -64,6 +73,9 @@ func (t Tanh) Derivative(x float32) float32 {
 	return float32(1.0 - float64(tanhVal)*float64(tanhVal))
 }
 
+// Linear activation function (identity function).
+// Output = Input. Used here in the output layer before the Softmax calculation (which happens externally).
+// Also suitable for regression tasks where the output is not bounded.
 type Linear struct{}
 
 func (t Linear) Activate(x float32) float32 {

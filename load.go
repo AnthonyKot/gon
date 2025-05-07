@@ -37,7 +37,14 @@ const (
 	NumSamplesToSave = 3
 )
 
-// Returns: list of images [image][channel][pixel_data_float64], list of labels [label_int], error
+// loadCIFAR10 loads a single CIFAR-10 batch file (binary format).
+// The binary format consists of 10000 records.
+// Each record is 3073 bytes: 1 byte label (0-9), followed by 3072 bytes pixel data.
+// Pixel data is 3072 unsigned bytes: 1024 Red, 1024 Green, 1024 Blue (row-major order).
+// Returns:
+// - [][][]float64: Slice of images. Each image is [][]float64 (3 channels), each channel is []float64 (1024 pixels, 0.0-1.0).
+// - []int: Slice of labels (0-9).
+// - error: Any error encountered during file reading or processing.
 func loadCIFAR10(filePath string) ([][][]float64, []int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -177,16 +184,18 @@ func oneHotEncode(labels []int, numClasses int) [][]float32 { // Return [][]floa
 	return encoded
 }
 
-func description(encoded []float32, desc []string) string { // Input is []float32
-	for i := 0; i < len(encoded); i++ { // Use len() for slice
-		if encoded[i] == 1.0 { // Access slice element directly
+// description finds the string label corresponding to a one-hot encoded vector.
+func description(encoded []float32, desc []string) string {
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] == 1.0 {
 			return desc[i]
 		}
 	}
 	panic("No suitable description")
 }
 
-func label(encoded []float32) int { // Input is []float32
+// label finds the integer label index corresponding to a one-hot encoded vector.
+func label(encoded []float32) int {
 	for i := 0; i < len(encoded); i++ {
 		if encoded[i] == 1.0 {
 			return i
@@ -195,7 +204,9 @@ func label(encoded []float32) int { // Input is []float32
 	panic("No suitable idx")
 }
 
-// Converts RGB image (represented as [][]float64 channels) to a flattened B&W []float32 slice
+// RGBToBlackWhiteFlattened converts an RGB image (represented as 3 channels of []float64 pixel data)
+// into a single flattened slice of grayscale []float32 pixel data.
+// It uses the standard luminance formula: Gray = 0.299*R + 0.587*G + 0.114*B.
 func RGBToBlackWhiteFlattened(rgbImage [][]float64) []float32 {
 	if len(rgbImage) != Colors {
 		panic("RGBToBlackWhiteFlattened: Expected 3 color channels")
@@ -230,7 +241,8 @@ func convertImagesToInputs(images [][][]float64) [][]float32 { // Input/Output t
 }
 
 
-func load() ([][][]float64, [][]float32) { // Return types changed
+// load reads the first CIFAR-10 batch file, performs one-hot encoding on labels.
+func load() ([][][]float64, [][]float32) {
 	images, labels, err := loadCIFAR10("data/data_batch_1.bin")
 	if err != nil {
 		fmt.Println("Error loading CIFAR-10:", err)
@@ -241,7 +253,9 @@ func load() ([][][]float64, [][]float32) { // Return types changed
 	return images, out
 }
 
-func accuracy(nn *neuralnet.NeuralNetwork, trainingData [][]float32, expectedOutputs [][]float32, from int, to int, numWorkers int) float32 {
+// accuracy calculates the classification accuracy over a specified range of the dataset (e.g., training or validation set).
+// It supports parallel calculation using goroutines and network cloning for thread safety.
+func accuracy(nn *neuralnet.NeuralNetwork, allInputs [][]float32, allLabels [][]float32, from int, to int, numWorkers int) float32 {
 	numSamplesToTest := to - from
 	if numSamplesToTest <= 0 {
 		return 0.0

@@ -46,16 +46,20 @@ type Params struct {
 	decay  float32
 	L2     float32
 	// lowCap float32 // Removed: Unused
-	MomentumCoefficient float32
+	MomentumCoefficient float32 // Coefficient for momentum update (e.g., 0.9)
 }
 
 
+// NewParams creates a Params struct with default values for non-specified fields.
+// Note: 'cap' parameter is unused as lowCap was removed. Consider removing 'cap' parameter.
 func NewParams(learningRate float32, decay float32, regularization float32, cap float32) Params {
 	// Calls NewParamsFull, providing default values for momentum
 	defaults := defaultParams()
 	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient)
 }
 
+// NewParamsFull creates a Params struct with all fields specified.
+// Note: 'cap' parameter from NewParams is ignored here as lowCap was removed.
 func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32) Params {
 	return Params{
 		lr:                  learningRate,
@@ -83,8 +87,9 @@ func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNe
 	return nn
 }
 
+// initialise creates and initializes the neural network structure, including layers, neurons, weights, and biases.
 func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano()) // Seed random number generator for weight initialization
 
 	// Note: To support zero hidden layers (direct input to output), this function
 	// would need adjustments, particularly in how prevLayerNeuronCount is initialized
@@ -174,9 +179,11 @@ func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params 
 }
 
 
+// FeedForward propagates the input signal through the network, layer by layer,
+// calculating the output of each neuron based on weights, biases, and activation functions.
 func (nn *NeuralNetwork) FeedForward(input []float32) {
-	// Input is now []float32. Copy it to nn.input if necessary.
-	// nn.input slice is preallocated in initialise.
+	// Input is now []float32. Copy it to nn.input.
+	// nn.input slice is preallocated in initialise. This loop populates it.
 	if len(input) != len(nn.input) {
 		// This shouldn't happen if inputSize matches, but as a safeguard:
 		panic(fmt.Sprintf("FeedForward: input size %d does not match network input size %d", len(input), len(nn.input)))
@@ -223,21 +230,28 @@ func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate floa
 			// Update weights
 			if neuron.accumulatedWeightGradients != nil { // Check if initialized
 				for wIdx := range neuron.weights {
-					// Add L2 regularization gradient component (using float64 intermediate)
-					// avgGrad variable removed as it was unused.
-					avgGrad64 := float64(neuron.accumulatedWeightGradients[wIdx])/float64(fBatchSize) + float64(nn.params.L2)*float64(neuron.weights[wIdx])
+					// Calculate average gradient for this weight over the batch.
+					avgGrad64 := float64(neuron.accumulatedWeightGradients[wIdx]) / float64(fBatchSize)
+					// Add L2 regularization gradient component: lambda * weight
+					// This penalizes large weights to prevent overfitting.
+					avgGrad64 += float64(nn.params.L2) * float64(neuron.weights[wIdx])
 
+					// Apply momentum update: new_momentum = momentum_coeff * old_momentum + learning_rate * gradient
+					// Momentum helps accelerate convergence and overcome local minima.
 					momentum64 := float64(nn.params.MomentumCoefficient)*float64(neuron.momentum[wIdx]) + float64(learningRate)*avgGrad64
 					neuron.momentum[wIdx] = float32(momentum64)
-					neuron.weights[wIdx] = float32(float64(neuron.weights[wIdx]) - momentum64) // Update using float64 intermediate
-					neuron.weights[wIdx] = capValue(neuron.weights[wIdx])
+					// Update weight: weight = weight - new_momentum
+					neuron.weights[wIdx] = float32(float64(neuron.weights[wIdx]) - momentum64)
+					neuron.weights[wIdx] = capValue(neuron.weights[wIdx]) // Cap extreme values
 				}
 			}
 
 			// Update bias (using float64 intermediate)
+			// Calculate average gradient for bias over the batch.
 			avgBiasGrad64 := float64(neuron.accumulatedBiasGradient) / float64(fBatchSize)
+			// Apply simple gradient descent step for bias (momentum could also be added here).
 			neuron.bias = float32(float64(neuron.bias) - float64(learningRate)*avgBiasGrad64)
-			neuron.bias = capValue(neuron.bias)
+			neuron.bias = capValue(neuron.bias) // Cap extreme values
 		}
 	}
 }
@@ -461,14 +475,16 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 }
 
 // backpropagateAndAccumulateForSample performs feedforward, calculates loss,
-// computes sample-specific deltas, and accumulates gradients for a single sample.
-// It returns the loss for this sample.
+// computes sample-specific deltas (errors) and accumulates gradients for a single sample.
+// It returns the loss calculated for this sample.
 func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float32, labelSample []float32) float32 {
-	// 1. FeedForward for the current sample
+	// 1. FeedForward: Calculate neuron outputs for the current sample.
 	nn.FeedForward(dataSample)
 
-	// 2. Calculate error vector for this sample (softmax_output - target)
-	props := nn.calculateProps() // Uses current nn.output (from dataSample's FeedForward), returns []float64
+	// 2. Calculate Output Layer Error (Delta):
+	// For cross-entropy loss combined with a softmax output layer, the error signal (delta)
+	// for each output neuron simplifies beautifully to (softmax_probability - target_probability).
+	props := nn.calculateProps() // Get softmax probabilities (float64)
 	if len(props) != len(labelSample) {
 		panic("backpropagateAndAccumulateForSample: props and labelSample length mismatch")
 	}
@@ -492,11 +508,15 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 	// Use the errVecData slice calculated earlier in this function.
 	for j := 0; j < len(outputLayer.neurons); j++ {
 		// For a single sample, the delta is the error component (softmax_output - target_j).
-		outputLayer.deltas[j] = capValue(float32(errVecData[j])) // Use errVecData calculated above
+		outputLayer.deltas[j] = capValue(float32(errVecData[j])) // Store the calculated delta
 	}
 
-	// Propagate deltas backward through hidden layers
-	for i := len(nn.layers) - 2; i >= 0; i-- {
+	// Propagate deltas backward through hidden layers:
+	// The delta for a neuron in a hidden layer is calculated based on the weighted sum
+	// of the deltas from the layer *ahead* of it, multiplied by the derivative of its own activation function.
+	// Formula: delta_j = (Sum_k(delta_k * weight_kj)) * activation_derivative(output_j)
+	// where j is current layer neuron index, k is next layer neuron index.
+	for i := len(nn.layers) - 2; i >= 0; i-- { // Iterate backwards from last hidden layer
 		layer := nn.layers[i]
 		nextLayer := nn.layers[i+1]
 
@@ -508,21 +528,25 @@ func (nn *NeuralNetwork) backpropagateAndAccumulateForSample(dataSample []float3
 			// Removed redundant float32 errorSumTimesWeight calculation loop.
 			// Calculate error sum using float64 directly.
 			var errorSumTimesWeight64 float64 = 0.0
-			// Sum (delta_k_nextLayer * weight_kj_nextLayer)
-			for k, nextNeuron := range nextLayer.neurons { // For each neuron 'k' in next layer 'i+1'
+			// Sum (delta_k * weight_kj) from the next layer
+			for k, nextNeuron := range nextLayer.neurons { // k = index in next layer
+				// nextNeuron.weights[j] is the weight connecting neuron j (current layer) to neuron k (next layer)
 				errorSumTimesWeight64 += float64(nextNeuron.weights[j]) * float64(nextLayer.deltas[k])
 			}
-			// Delta for neuron 'j' in layer 'i' = errorSumTimesWeight * derivative_of_activation(neuron 'j' output)
-			derivative := layer.activation.Derivative(neuron.output) // Removed UseFloat64 flag
-			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative)))
+			// Multiply by the derivative of the activation function for the current neuron j
+			derivative := layer.activation.Derivative(neuron.output)
+			layer.deltas[j] = capValue(float32(errorSumTimesWeight64*float64(derivative))) // Store the calculated delta
 		}
 	}
 
-	// 4. Accumulate gradients based on these sample-specific deltas and current activations
-	//    (nn.input and neuron.output are from the current sample's FeedForward pass).
+	// 4. Accumulate Gradients: Calculate the gradient contribution of this sample for each weight and bias,
+	//    and add it to the running total for the current mini-batch.
+	//    Gradient for weight w_ij = delta_j * output_i (where i is prev layer neuron, j is current layer neuron)
+	//    Gradient for bias b_j = delta_j
 	for layerIndex, layer := range nn.layers {
-		var prevLayerOutputs []float32
+		var prevLayerOutputs []float32 // Holds outputs from the layer feeding *into* the current layer
 		if layerIndex == 0 {
+			// First layer's inputs are the network inputs
 			prevLayerOutputs = nn.input // Activations from input layer (i.e., the input sample itself)
 		} else {
 			prevLayer := nn.layers[layerIndex-1]
@@ -601,11 +625,14 @@ func (nn *NeuralNetwork) calculateProps() []float64 { // Return []float64
 	return softmaxFloat64 // Return the slice directly
 }
 
+// calculateLoss computes the cross-entropy loss for a single sample, including L2 regularization.
+// Cross-Entropy Loss: - Sum_i (target_i * log(predicted_probability_i))
+// L2 Regularization Term: (lambda / 2) * Sum_all_weights (weight^2)
 func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is now []float32
-	propsData := nn.calculateProps() // Returns []float64
+	propsData := nn.calculateProps() // Get predicted probabilities (float64)
 	var loss float32 = 0.0
 
-	// Optimization: Access raw vector data to avoid repeated AtVec calls
+	// Calculate Cross-Entropy part
 	// propsData is already []float64
 	// targetData is now the input []float32
 
@@ -637,8 +664,12 @@ func (nn *NeuralNetwork) calculateLoss(target []float32) float32 { // Target is 
 }
 
 
-
-// stableSoftmax computes softmax in a numerically stable way.
+// stableSoftmax computes the softmax function in a numerically stable way.
+// Softmax converts a vector of scores (logits) into a probability distribution.
+// Formula: probability_i = exp(score_i) / Sum_j(exp(score_j))
+// Numerical Stability: Subtracting the maximum score from all scores before exponentiation
+// prevents large intermediate values that could cause overflow (exp(large_number) -> Inf)
+// or underflow (exp(very_negative_number) -> 0), without changing the final probabilities.
 func stableSoftmax(output []float32) []float32 {
 	if len(output) == 0 {
 		return []float32{}
@@ -698,11 +729,13 @@ func xavierInit(numInputs int, numOutputs int, params Params) float32 {
 	return capValue(xavier)
 }
 
+// capValue ensures numerical stability by handling NaN (Not a Number) and Inf (Infinity) values.
+// It replaces NaN with 0 and caps Inf values at a large predefined constant.
 func capValue(value float32) float32 {
 	if math.IsNaN(float64(value)) {
-		return 0.0
+		return 0.0 // Replace NaN with 0
 	}
-	if math.IsInf(float64(value), 1) {
+	if math.IsInf(float64(value), 1) { // +Inf
 		return DefaultMaxAbsValue
 	}
 	if math.IsInf(float64(value), -1) {
