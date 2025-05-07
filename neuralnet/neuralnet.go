@@ -32,7 +32,6 @@ type Layer struct {
 type NeuralNetwork struct {
         layers  []*Layer
         input   []float32
-        loss    []float32
         params  Params
 }
 
@@ -208,18 +207,6 @@ func (nn *NeuralNetwork) FeedForward(input mat.VecDense) {
         }
 }
 
-func (nn *NeuralNetwork) AccumulateLoss(target mat.VecDense) {
-        props := nn.calculateProps()
-        // Softmax - 1 or Softmax
-        for i := 0; i < len(nn.loss); i++ {
-                if (target.AtVec(i) == 1.0) {
-                        nn.loss[i] += float32(props.At(i, 0)) - 1
-                } else {
-                        nn.loss[i] += float32(props.At(i, 0))
-                }
-                nn.loss[i] = capValue(nn.loss[i], nn.params)
-        }
-}
 
 
 func (nn *NeuralNetwork) UpdateWeights(learningRate float32) {
@@ -592,17 +579,18 @@ func convertBiasToDense(neurons []*Neuron) *mat.VecDense {
         return dense
 }
 
-func (nn *NeuralNetwork) Backpropagate(dataPoints int) {
+func (nn *NeuralNetwork) Backpropagate(errors []mat.VecDense) {
         outputLayer := nn.layers[len(nn.layers) - 1]
         outputLayer.deltas = make([]float32, len(outputLayer.neurons))
 
-        // use accumulated loss deravative as delta for the last layer
-        for i := 0; i < len(outputLayer.neurons); i++ {
-                outputLayer.deltas[i] = nn.loss[i] / float32(dataPoints)
-                outputLayer.deltas[i] = capValue(outputLayer.deltas[i], nn.params)
-        }
-        for i := 0; i < len(outputLayer.neurons); i++ {
-                nn.loss[i] = 0
+        // average (softmax - target) across the batch
+        batchSize := float32(len(errors))
+        for j := 0; j < len(outputLayer.neurons); j++ {
+                var sumErr float32
+                for _, errVec := range errors {
+                        sumErr += float32(errVec.AtVec(j))
+                }
+                outputLayer.deltas[j] = capValue(sumErr/batchSize, nn.params)
         }
 
         for i := len(nn.layers) - 2; i >= 0; i-- {
