@@ -17,7 +17,7 @@ import (
 // DefaultMaxAbsValue defines a large finite number to cap extreme values, preventing Inf propagation.
 const DefaultMaxAbsValue = float32(1e10)
 
-const MAX_WORKERS int = 8
+const MAX_WORKERS int = 12
 
 type Neuron struct {
 	weights  []float32
