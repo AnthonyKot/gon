@@ -274,16 +274,18 @@ func main() {
 
 	trainingSetSize := to - from
 	validationSetSize := (to - from) / train_to_validation
+	miniBatchSize := 64 // Define mini-batch size
 	fmt.Printf("Training set size: %d samples\n", trainingSetSize)
 	fmt.Printf("Validation set size: %d samples\n", validationSetSize)
 	fmt.Printf("Number of main epochs: %d\n", epochs)
-	fmt.Printf("Samples processed per call to nn.TrainBatch (effectively the batch size for gradient update): %d\n", trainingSetSize)
+	fmt.Printf("Mini-batch size: %d\n", miniBatchSize)
 	fmt.Println("---")
 
 	nn := neuralnet.DefaultNeuralNetwork(1024, []int{512, 256}, 10)
 	j := 0
 	for i := 0; i < epochs; i++ {
-		nn.TrainBatch(inputs[from:to], labels[from:to], 1)
+		// Switched to TrainMiniBatch
+		nn.TrainMiniBatch(inputs[from:to], labels[from:to], miniBatchSize, 1)
 		for sample := 0; sample < 3; sample++ {
 			j = to + rand.Intn((to - from) / train_to_validation)
 			pred := nn.Predict(inputs[j])
