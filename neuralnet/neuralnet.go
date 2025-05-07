@@ -53,6 +53,7 @@ type Params struct {
 	// jacobian bool // Removed, no longer used
 	bn                  float32
 	MomentumCoefficient float32
+	UseFloat64          bool // If true, use float64 for intermediate calculations
 }
 
 type Task struct {
