@@ -51,10 +51,10 @@ This code implements a simple feedforward neural network for image classificatio
     -   The core of the project. Implements a feedforward neural network.
     -   Supports various activation functions (`neuralnet/activations.go`) like ReLU, LeakyReLU, Sigmoid, and Tanh.
     -   Includes training algorithms like SGD and Mini-Batch.
-    -   Now supports saving/loading.
-    - Includes momentum and batch normalisation.
+    -   Supports saving/loading the trained model via JSON.
+    -   Implements momentum for SGD.
 - **Data Loading (`load.go`):**
-    -   Handles loading and preprocessing the CIFAR-10 dataset.
+    -   Handles loading the CIFAR-10 dataset (binary format).
     -   Includes functions to convert RGB images to grayscale and flatten them.
 - **Activation Functions (`neuralnet/activations.go`):**
     -   Defines various activation functions and their derivatives.
