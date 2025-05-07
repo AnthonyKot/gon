@@ -669,24 +669,26 @@ func stableSoftmax(output []float32) []float32 {
 	if len(output) == 0 {
 		return []float32{}
 	}
-	// Subtract max for numerical stability
-	maxVal := output[0]
+
+	exps := make([]float32, len(output))
+	// Use float64 for intermediate calculations for stability
+	var maxVal64 float64 = float64(output[0])
 	for _, v := range output[1:] {
-		if v > maxVal {
-			maxVal = v
+		if float64(v) > maxVal64 {
+			maxVal64 = float64(v)
 		}
 	}
 
-	exps := make([]float32, len(output))
-	var sumExps float32 = 0.0
+	var sumExps64 float64 = 0.0
+	tempExps64 := make([]float64, len(output)) // Temporary for float64 exponentiated values
 	for i, v := range output {
-		exps[i] = float32(math.Exp(float64(v - maxVal)))
-		sumExps += exps[i]
+		expVal64 := math.Exp(float64(v) - maxVal64)
+		tempExps64[i] = expVal64
+		sumExps64 += expVal64
 	}
 
-	// Handle case where sumExps is zero (e.g., all inputs were very small, leading to exp(v-max) -> 0)
 	// or if sumExps becomes Inf (less likely with max subtraction but theoretically possible with extreme inputs)
-	if sumExps == 0 || math.IsInf(float64(sumExps), 0) {
+	if sumExps64 == 0 || math.IsInf(sumExps64, 0) {
 		// Fallback: distribute probability uniformly.
 		// This prevents division by zero or NaN results (e.g. 0/0 or Inf/Inf).
 		// This situation indicates that the network outputs are either all extremely small or problematic.
@@ -697,8 +699,8 @@ func stableSoftmax(output []float32) []float32 {
 		return exps
 	}
 
-	for i := range exps {
-		exps[i] /= sumExps
+	for i := range tempExps64 {
+		exps[i] = float32(tempExps64[i] / sumExps64) // Cast back to float32
 	}
 	return exps
 }

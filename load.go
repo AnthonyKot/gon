@@ -45,44 +45,43 @@ func loadCIFAR10(filePath string) ([][][]float64, []int, error) {
 	}
 	defer file.Close()
 
-	images := make([][][]float64, Batch) // Changed type
+	images := make([][][]float64, Batch) // Pre-allocate for the batch size
 	labels := make([]int, Batch)
-	readCount := 0 // Keep track of how many images we've actually read
-	for readCount < Batch {
-		// Read one row (image + label) at a time for simplicity
-		row := make([]byte, Row)
-		n, err := io.ReadFull(file, row)
-		if err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				break // End of file or incomplete row
-			}
-			return nil, nil, err
-		}
-		if n != Row {
-			// Should not happen with io.ReadFull unless EOF
-			break
-		}
+	data := make([]byte, Batch*Row) // Buffer to read the entire batch
 
-		labels[readCount] = int(row[0])
+	// Read the entire batch file content
+	n, err := io.ReadFull(file, data)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		// Handle unexpected errors during read
+		return nil, nil, fmt.Errorf("error reading batch file: %w", err)
+	}
+	// Calculate how many full records were actually read
+	numRecordsRead := n / Row
+	if numRecordsRead == 0 && err == io.EOF {
+		return nil, nil, fmt.Errorf("empty batch file or read error")
+	}
+
+
+	// Process the records read into the buffer
+	for i := 0; i < numRecordsRead; i++ {
+		row := data[i*Row : (i+1)*Row]
+		labels[i] = int(row[0])
 
 		pixels := row[LabelSize : LabelSize+ImageSize]
 		norm := make([]float64, ImageSize)
-		for k := 0; k < len(pixels); k++ { // Corrected loop to start from 0
+		for k := 0; k < len(pixels); k++ {
 			norm[k] = float64(pixels[k]) / 255.0
 		}
-		imageChannels := make([][]float64, Colors) // Changed type
+		imageChannels := make([][]float64, Colors)
 		for k := 0; k < Colors; k++ {
 			channel := norm[k*Channel : (k+1)*Channel]
-			imageChannels[k] = channel // Store the slice directly
+			imageChannels[k] = channel
 		}
-		images[readCount] = imageChannels
-		readCount++
+		images[i] = imageChannels
 	}
-	// Trim slices if fewer than Batch images were read
-	images = images[:readCount]
-	labels = labels[:readCount]
 
-	return images, labels, nil
+	// Return slices trimmed to the actual number of records read
+	return images[:numRecordsRead], labels[:numRecordsRead], nil
 }
 
 // Removed duplicated block from loadCIFAR10

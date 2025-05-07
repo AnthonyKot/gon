@@ -10,8 +10,22 @@ go build -o gon
 
 ## Usage
 ```bash
-./gon -cpuprofile=cpu.prof
+# Build the application
+go build -o gon
+
+# Run with default settings
+./gon
+
+# Run with specific hyperparameters and profiling enabled
+./gon -lr=0.005 -decay=0.98 -epochs=20 -batch=128 -workers=8 -cpuprofile=cpu.prof
 ```
+Flags:
+- `-lr`: Learning rate (default: 0.01)
+- `-decay`: Learning rate decay factor per epoch (default: 0.95)
+- `-epochs`: Number of training epochs (default: 10)
+- `-batch`: Mini-batch size (default: 64)
+- `-workers`: Number of parallel workers for training/accuracy (default: number of CPU cores)
+- `-cpuprofile`: File path to write CPU profile data (e.g., cpu.prof)
 
 ## Project Structure
 - load.go: Loads and preprocesses the CIFAR-10 dataset.
@@ -60,14 +74,13 @@ This code implements a simple feedforward neural network for image classificatio
     -   Defines various activation functions and their derivatives.
 ### Usage
 
-The code is intended to be used as a library for learning and experimenting with neural networks.
+The project provides a runnable application (`load.go`) for training and evaluating the network on CIFAR-10. The `neuralnet` package can also potentially be used as a library in other Go projects.
 
 ### Improvements
 
 The following improvements have been implemented:
 
-- **Error Handling**: Proper error handling is implemented instead of panics.
-- **Thread Safety**: Race conditions are now handled in Mini-Batch.
+- **Thread Safety**: Race conditions are handled in Mini-Batch training and accuracy calculation using network cloning.
 - **Momentum SGD**: Momentum has been added.
 - **Model Saving/Loading**: The model can be saved and loaded.
 - **Parallelism**: Mini-batch training and accuracy calculation are parallelized.
@@ -80,35 +93,8 @@ The following improvements have been implemented:
 
 ### Installation
 
-To use this code you must copy and paste:
-
-Copy and paste: Copy the contents of `neuralnet` directory into your own project.
-
-Import as a module: Place `neuralnet` directory within your project and use it as a module:
+Build the executable using Go:
+```bash
+go build -o gon
+```
 [end of README.md]
-
-
-Go result:
---- Per-Class Validation Accuracy ---
-Accuracy of airplane : 31 %
-Accuracy of automobile : 18 %
-Accuracy of     bird : 42 %
-Accuracy of      cat : 18 %
-Accuracy of     deer : 28 %
-Accuracy of      dog : 19 %
-Accuracy of     frog : 36 %
-Accuracy of    horse : 31 %
-Accuracy of     ship : 66 %
-Accuracy of    truck : 39 %
-------------------------------------
-
-scipy result:
-> Accuracy of   car : 41 %
-> Accuracy of  bird : 22 %
-> Accuracy of   cat : 18 %
-> Accuracy of  deer : 48 %
-> Accuracy of   dog : 35 %
-> Accuracy of  frog : 32 %
-> Accuracy of horse : 34 %
-> Accuracy of  ship : 56 %
-> Accuracy of truck : 60 % 
