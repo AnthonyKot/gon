@@ -1,15 +1,17 @@
 package neuralnet
 
+// Package neuralnet provides a simple feedforward neural network implementation.
 import (
 	"encoding/json"
 	"fmt"
-	"gonum.org/v1/gonum/mat"
 	"math"
 	"math/rand"
 	"os"
 	"strings"
-	"sync" // Added for multi-threading
+	"sync"
 	"time"
+
+	"gonum.org/v1/gonum/mat"
 )
 
 // DefaultMaxAbsValue defines a large finite number to cap extreme values, preventing Inf propagation.

@@ -2,21 +2,20 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
-	"gon/neuralnet"
 	"image"
 	"image/color"
 	"image/png"
 	"io"
 	"math/rand"
 	"os"
-	"sync" // Added for multi-threading in accuracy calculation
-	"time" // Added for timing
-
-	"flag"
 	"runtime"
 	"runtime/pprof"
+	"sync"
+	"time"
 
+	"gon/neuralnet"
 	"gonum.org/v1/gonum/mat"
 )
 

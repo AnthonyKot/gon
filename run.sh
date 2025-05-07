@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -e
 
 # Set necessary Go environment variables
 export GOROOT=/opt/homebrew/Cellar/go/1.24.0/libexec
@@ -7,4 +8,4 @@ export GOSUMDB=sum.golang.org
 
 # Run the main program
 cd "$(dirname "$0")"
-go run load.go "$@"
+go run load.go
