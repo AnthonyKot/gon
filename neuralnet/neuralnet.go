@@ -31,6 +31,9 @@ type Neuron struct {
 	// Fields for momentum update (used by SGD optimizer)
 	WeightVelocities []float32
 	BiasVelocity     float32
+	// Batch Normalization: Temporary storage for values
+	PreBNAOutput        float32 // Pre-BN activation (z = w*x + b)
+	XNormalizedOutput float32 // Post-BN, pre-scale/shift ( (z - mean) / sqrt(var + eps) )
 }
 
 type Layer struct {
@@ -46,6 +49,12 @@ type Layer struct {
 	RunningVariance     []float32 // Moving average of variances, one per neuron
 	Epsilon             float32   // Small constant for numerical stability
 	MomentumBN          float32   // Momentum for updating running mean/variance
+
+	// Batch Normalization: Fields for current mini-batch statistics and intermediate values
+	CurrentBatchMean     []float32       // Actual mean for the current mini-batch, one per neuron
+	CurrentBatchVariance []float32       // Actual variance for the current mini-batch, one per neuron
+	LastInputPreBNBatch  [][]float32     // Stores [sampleIdx][neuronIdx] -> PreBNAOutput for the batch
+	LastXNormalizedBatch [][]float32     // Stores [sampleIdx][neuronIdx] -> x_normalized for the batch
 }
 
 // Represents the simplest NN.
@@ -243,70 +252,47 @@ func (nn *NeuralNetwork) FeedForward(input []float32) {
 	for layerIdx, layer := range nn.Layers {
 		isCurrentLayerOutput := (layerIdx == len(nn.Layers)-1)
 		
-		// Temporary slice to hold pre-activation outputs for this layer (x values)
-		// This is per-sample. For true BN, batch-wide pre-activations are needed.
-		preActivationOutputs := make([]float32, len(layer.Neurons))
+		// This slice will hold the values that go into the activation function
+		inputToActivation := make([]float32, len(layer.Neurons))
 
 		for neuronIdx, neuron := range layer.Neurons {
-			// Calculate weighted sum + bias
+			// 1. Calculate weighted sum + bias -> PreBNAOutput
 			var sum float32 = neuron.Bias
 			for weightIdx, weight := range neuron.Weights {
 				sum += currentInput[weightIdx] * weight
 			}
-			preActivationOutputs[neuronIdx] = sum
-		}
+			neuron.PreBNAOutput = sum // Store for potential BN and backprop
 
-		// Apply Batch Normalization if enabled for this layer
-		if layer.UseBatchNormalization {
-			if nn.Params.IsTraining {
-				// --- Training Phase ---
-				// !!! IMPORTANT LIMITATION / PLACEHOLDER !!!
-				// True Batch Normalization requires mean and variance calculated *across the mini-batch* for each neuron.
-				// The current FeedForward processes one sample at a time.
-				// The following uses per-neuron running stats for calculation, which is incorrect for training's batch stats.
-				// This section needs to be refactored to use actual batch statistics when TrainMiniBatch is adapted.
-				// For now, this simulates using "batch" stats that are actually running stats, to get the structure in place.
-				// A more accurate placeholder might be to panic or log a warning.
-				
-				// Placeholder: Use running stats as stand-in for batch stats for this subtask.
-				// This is NOT correct for BN training logic but helps structure the code.
-				// In a real scenario, batchMean and batchVariance would be computed from all samples in the current mini-batch.
-				batchMean := layer.RunningMean // Conceptual placeholder
-				batchVariance := layer.RunningVariance // Conceptual placeholder
+			currentVal := neuron.PreBNAOutput
 
-				for neuronIdx := range layer.Neurons {
-					x := preActivationOutputs[neuronIdx]
-					// Normalize using (conceptual) batch stats
-					xNormalized := (x - batchMean[neuronIdx]) / float32(math.Sqrt(float64(batchVariance[neuronIdx] + layer.Epsilon)))
-					// Scale and shift
-					bnOutput := layer.Gamma[neuronIdx]*xNormalized + layer.Beta[neuronIdx]
-					preActivationOutputs[neuronIdx] = bnOutput // Update preActivationOutputs with BN result
-
-					// Update running mean and variance (this part is standard)
-					// Note: batchMean[neuronIdx] and batchVariance[neuronIdx] here are placeholders.
-					// Real batchMean/Variance for this neuron would be used.
-					layer.RunningMean[neuronIdx] = layer.MomentumBN*layer.RunningMean[neuronIdx] + (1.0-layer.MomentumBN)*batchMean[neuronIdx] 
-					layer.RunningVariance[neuronIdx] = layer.MomentumBN*layer.RunningVariance[neuronIdx] + (1.0-layer.MomentumBN)*batchVariance[neuronIdx]
+			// 2. Apply Batch Normalization if enabled for this layer
+			if layer.UseBatchNormalization {
+				var xNormalized float32
+				if nn.Params.IsTraining {
+					// Training: Use CurrentBatchMean/Variance (pre-calculated by TrainMiniBatch)
+					// Running stats update is also moved to TrainMiniBatch.
+					if layer.CurrentBatchMean == nil || layer.CurrentBatchVariance == nil {
+						// This should not happen if TrainMiniBatch is correctly implemented
+						panic(fmt.Sprintf("Layer %d: CurrentBatchMean/Variance not set during training", layerIdx))
+					}
+					xNormalized = (currentVal - layer.CurrentBatchMean[neuronIdx]) / float32(math.Sqrt(float64(layer.CurrentBatchVariance[neuronIdx] + layer.Epsilon)))
+				} else {
+					// Inference: Use running stats
+					xNormalized = (currentVal - layer.RunningMean[neuronIdx]) / float32(math.Sqrt(float64(layer.RunningVariance[neuronIdx] + layer.Epsilon)))
 				}
-			} else {
-				// --- Inference Phase ---
-				for neuronIdx := range layer.Neurons {
-					x := preActivationOutputs[neuronIdx]
-					// Normalize using running stats
-					xNormalized := (x - layer.RunningMean[neuronIdx]) / float32(math.Sqrt(float64(layer.RunningVariance[neuronIdx] + layer.Epsilon)))
-					// Scale and shift
-					bnOutput := layer.Gamma[neuronIdx]*xNormalized + layer.Beta[neuronIdx]
-					preActivationOutputs[neuronIdx] = bnOutput
-				}
+				neuron.XNormalizedOutput = xNormalized // Store for backprop
+				currentVal = layer.Gamma[neuronIdx]*xNormalized + layer.Beta[neuronIdx]
 			}
+			inputToActivation[neuronIdx] = currentVal
 		}
 
-		// Apply Activation Function and Dropout
+		// 3. Apply Activation Function and Dropout
 		for neuronIdx, neuron := range layer.Neurons {
-			activatedOutput := layer.Activation.Activate(preActivationOutputs[neuronIdx])
+			activatedOutput := layer.Activation.Activate(inputToActivation[neuronIdx])
 			neuron.Output = capValue(activatedOutput)
 
-			// Apply Dropout if it's a hidden layer and we are training
+			// 4. Apply Dropout if it's a hidden layer and we are training
+			// Dropout is applied *after* batch normalization and activation
 			// Dropout is applied *after* batch normalization and activation
 			if !isCurrentLayerOutput && nn.Params.IsTraining && nn.Params.DropoutRate > 0 {
 				if rand.Float32() < nn.Params.DropoutRate {
@@ -358,6 +344,8 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 			UseBatchNormalization: layer.UseBatchNormalization,
 			Epsilon:             layer.Epsilon,
 			MomentumBN:          layer.MomentumBN,
+			// CurrentBatchMean, CurrentBatchVariance, LastInputPreBNBatch, LastXNormalizedBatch are not cloned.
+			// They are transient and managed by the main training loop or should be re-evaluated by clones if needed.
 		}
 		if layer.UseBatchNormalization {
 			cloneLayer.Gamma = make([]float32, len(layer.Gamma))
@@ -368,6 +356,7 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 			copy(cloneLayer.RunningMean, layer.RunningMean)
 			cloneLayer.RunningVariance = make([]float32, len(layer.RunningVariance))
 			copy(cloneLayer.RunningVariance, layer.RunningVariance)
+			// Note: Not cloning CurrentBatchMean, CurrentBatchVariance, LastInputPreBNBatch, LastXNormalizedBatch
 		}
 
 		// Deep copy all neurons
@@ -462,106 +451,271 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 		var totalEpochLoss float32 = 0.0
 		var samplesProcessedInEpoch int = 0
 
-		// Shuffle data at the beginning of each epoch
 		permutation := rand.Perm(numSamples)
-		shuffledTrainingData := make([][]float32, numSamples)
-		shuffledExpectedOutputs := make([][]float32, numSamples)
-		for i := 0; i < numSamples; i++ {
-			shuffledTrainingData[i] = trainingData[permutation[i]]
-			shuffledExpectedOutputs[i] = expectedOutputs[permutation[i]]
-		}
 
-		// Iterate over mini-batches
 		for i := 0; i < numSamples; i += batchSize {
 			end := i + batchSize
 			if end > numSamples {
-				end = numSamples // Adjust for the last batch if it's smaller
+				end = numSamples
 			}
-
 			currentMiniBatchSize := end - i
 			if currentMiniBatchSize == 0 {
-				continue // Should not happen if numSamples > 0
+				continue
 			}
 
-			nn.zeroAccumulatedGradients() // Zero out accumulators for the new mini-batch
+			miniBatchData := make([][]float32, currentMiniBatchSize)
+			miniBatchLabels := make([][]float32, currentMiniBatchSize)
+			for k := 0; k < currentMiniBatchSize; k++ {
+				originalIndex := permutation[i+k]
+				miniBatchData[k] = trainingData[originalIndex]
+				miniBatchLabels[k] = expectedOutputs[originalIndex]
+			}
+
+			nn.zeroAccumulatedGradients()
 			var miniBatchLoss float32 = 0.0
 
-			if numWorkers <= 1 {
-				// Single-threaded processing for the mini-batch
-				for j := i; j < end; j++ {
-					dataSample := shuffledTrainingData[j]
-					labelSample := shuffledExpectedOutputs[j]
+			if nn.Params.EnableBatchNorm && nn.Params.IsTraining {
+				// Step A: Collect PreBNAOutput for all samples in the batch for each BN layer.
+				// And Step B: Calculate batch statistics and update running stats.
+				
+				// Initialize/Resize LastInputPreBNBatch and LastXNormalizedBatch for all BN layers
+				for _, layer := range nn.Layers {
+					if layer.UseBatchNormalization {
+						// Resize LastInputPreBNBatch
+						if cap(layer.LastInputPreBNBatch) < currentMiniBatchSize || layer.LastInputPreBNBatch == nil {
+							layer.LastInputPreBNBatch = make([][]float32, currentMiniBatchSize)
+						} else {
+							layer.LastInputPreBNBatch = layer.LastInputPreBNBatch[:currentMiniBatchSize]
+						}
+						for sIdx := range layer.LastInputPreBNBatch {
+							if cap(layer.LastInputPreBNBatch[sIdx]) < len(layer.Neurons) || layer.LastInputPreBNBatch[sIdx] == nil {
+								layer.LastInputPreBNBatch[sIdx] = make([]float32, len(layer.Neurons))
+							} else {
+								layer.LastInputPreBNBatch[sIdx] = layer.LastInputPreBNBatch[sIdx][:len(layer.Neurons)]
+							}
+						}
+						// Resize LastXNormalizedBatch
+						if cap(layer.LastXNormalizedBatch) < currentMiniBatchSize || layer.LastXNormalizedBatch == nil {
+							layer.LastXNormalizedBatch = make([][]float32, currentMiniBatchSize)
+						} else {
+							layer.LastXNormalizedBatch = layer.LastXNormalizedBatch[:currentMiniBatchSize]
+						}
+						for sIdx := range layer.LastXNormalizedBatch {
+							if cap(layer.LastXNormalizedBatch[sIdx]) < len(layer.Neurons) || layer.LastXNormalizedBatch[sIdx] == nil {
+								layer.LastXNormalizedBatch[sIdx] = make([]float32, len(layer.Neurons))
+							} else {
+								layer.LastXNormalizedBatch[sIdx] = layer.LastXNormalizedBatch[sIdx][:len(layer.Neurons)]
+							}
+						}
+					}
+				}
+
+
+				// A. Collect PreBNAOutput
+				tempInputForLayer := make([][]float32, currentMiniBatchSize) // [sampleIdx][features]
+				for sIdx := 0; sIdx < currentMiniBatchSize; sIdx++ {
+					tempInputForLayer[sIdx] = miniBatchData[sIdx]
+				}
+
+				for layerIdx, layer := range nn.Layers {
+					currentLayerPreBNOutputs := make([][]float32, currentMiniBatchSize)
+					for sIdx := 0; sIdx < currentMiniBatchSize; sIdx++ {
+						currentLayerPreBNOutputs[sIdx] = make([]float32, len(layer.Neurons))
+					}
+
+					for sampleIdx := 0; sampleIdx < currentMiniBatchSize; sampleIdx++ {
+						sampleInput := tempInputForLayer[sampleIdx]
+						for neuronIdx, neuron := range layer.Neurons {
+							var sum float32 = neuron.Bias
+							for weightIdx, weight := range neuron.Weights {
+								sum += sampleInput[weightIdx] * weight
+							}
+							if layer.UseBatchNormalization {
+								layer.LastInputPreBNBatch[sampleIdx][neuronIdx] = sum
+							}
+							currentLayerPreBNOutputs[sampleIdx][neuronIdx] = sum // Store z for all neurons
+						}
+					}
+
+					// B. Calculate Batch Statistics & Update Running Stats (if BN layer)
+					if layer.UseBatchNormalization {
+						numNeurons := len(layer.Neurons)
+						layer.CurrentBatchMean = make([]float32, numNeurons)
+						layer.CurrentBatchVariance = make([]float32, numNeurons)
+						for neuronIdx := 0; neuronIdx < numNeurons; neuronIdx++ {
+							var sumPreBN float32 = 0.0
+							for sampleIdx := 0; sampleIdx < currentMiniBatchSize; sampleIdx++ {
+								sumPreBN += layer.LastInputPreBNBatch[sampleIdx][neuronIdx]
+							}
+							mean := sumPreBN / float32(currentMiniBatchSize)
+							layer.CurrentBatchMean[neuronIdx] = mean
+							
+							var sumSqDiff float32 = 0.0
+							for sampleIdx := 0; sampleIdx < currentMiniBatchSize; sampleIdx++ {
+								diff := layer.LastInputPreBNBatch[sampleIdx][neuronIdx] - mean
+								sumSqDiff += diff * diff
+							}
+							layer.CurrentBatchVariance[neuronIdx] = sumSqDiff / float32(currentMiniBatchSize)
+
+							layer.RunningMean[neuronIdx] = layer.MomentumBN*layer.RunningMean[neuronIdx] + (1.0-layer.MomentumBN)*mean
+							layer.RunningVariance[neuronIdx] = layer.MomentumBN*layer.RunningVariance[neuronIdx] + (1.0-layer.MomentumBN)*layer.CurrentBatchVariance[neuronIdx]
+						}
+					}
+					
+					// Prepare input for the next layer by applying BN (if any), activation, and dropout (if training)
+					// This is essentially the forward propagation step after PreBNAOutput is known and BN stats are ready.
+					if layerIdx < len(nn.Layers)-1 { // Not the output layer
+						nextLayerInputs := make([][]float32, currentMiniBatchSize)
+						for sIdx := 0; sIdx < currentMiniBatchSize; sIdx++ {
+							nextLayerInputs[sIdx] = make([]float32, len(layer.Neurons))
+							for neuronIdx, neuron := range layer.Neurons {
+								valToActivate := currentLayerPreBNOutputs[sIdx][neuronIdx]
+								if layer.UseBatchNormalization {
+									// Use just calculated CurrentBatchMean/Variance for this training step
+									xNorm := (valToActivate - layer.CurrentBatchMean[neuronIdx]) / float32(math.Sqrt(float64(layer.CurrentBatchVariance[neuronIdx] + layer.Epsilon)))
+									// neuron.XNormalizedOutput = xNorm // This would be set here if FeedForward wasn't called again
+									valToActivate = layer.Gamma[neuronIdx]*xNorm + layer.Beta[neuronIdx]
+								}
+								activatedVal := layer.Activation.Activate(valToActivate)
+								if nn.Params.IsTraining && nn.Params.DropoutRate > 0 && layerIdx < len(nn.Layers)-1 { // No dropout on output layer
+									if rand.Float32() < nn.Params.DropoutRate {
+										activatedVal = 0.0
+									} else {
+										activatedVal /= (1.0 - nn.Params.DropoutRate)
+									}
+								}
+								nextLayerInputs[sIdx][neuronIdx] = capValue(activatedVal)
+							}
+						}
+						tempInputForLayer = nextLayerInputs // Set input for the next layer
+					}
+				}
+			} // End of BN statistics calculation block
+
+			// C. Main Processing Loop: Forward Pass using computed BN stats, Backpropagation
+			// The nn.Params.IsTraining flag is true.
+			// nn.FeedForward will use CurrentBatchMean/Variance if set.
+			// It will also populate neuron.PreBNAOutput and neuron.XNormalizedOutput.
+			
+			// Store worker clones for gradient aggregation if multi-threaded
+			var workerClones []*NeuralNetwork
+			if numWorkers > 1 {
+				workerClones = make([]*NeuralNetwork, numWorkers)
+			}
+
+			if numWorkers <= 1 { // Single-threaded
+				for sIdx := 0; sIdx < currentMiniBatchSize; sIdx++ {
+					dataSample := miniBatchData[sIdx]
+					labelSample := miniBatchLabels[sIdx]
 					sampleLoss := nn.backpropagateAndAccumulateForSample(dataSample, labelSample)
 					miniBatchLoss += sampleLoss
+					// Collect XNormalizedOutput
+					if nn.Params.EnableBatchNorm && nn.Params.IsTraining {
+						for layerIdxCollect, layerCollect := range nn.Layers {
+							if layerCollect.UseBatchNormalization {
+								for neuronIdxCollect, neuronCollect := range layerCollect.Neurons {
+									layerCollect.LastXNormalizedBatch[sIdx][neuronIdxCollect] = neuronCollect.XNormalizedOutput
+								}
+							}
+						}
+					}
 				}
-			} else {
-				// Multi-threaded processing for the mini-batch
+			} else { // Multi-threaded
 				var wg sync.WaitGroup
 				workerLosses := make([]float32, numWorkers)
-				workerClones := make([]*NeuralNetwork, numWorkers)
-				samplesPerWorker := (currentMiniBatchSize + numWorkers - 1) / numWorkers // Ceiling division
-
+				
+				samplesPerWorker := (currentMiniBatchSize + numWorkers - 1) / numWorkers
 				for w := 0; w < numWorkers; w++ {
 					wg.Add(1)
-					workerStart := i + w*samplesPerWorker
+					workerStart := w * samplesPerWorker
 					workerEnd := workerStart + samplesPerWorker
-					if workerStart >= end { // No samples for this worker
-						wg.Done()
-						continue
-					}
-					if workerEnd > end {
-						workerEnd = end
-					}
+					if workerStart >= currentMiniBatchSize { wg.Done(); continue }
+					if workerEnd > currentMiniBatchSize { workerEnd = currentMiniBatchSize }
 
-					go func(workerID int, startIdx int, endIdx int) {
+					go func(workerID int, startIdx, endIdx int) {
 						defer wg.Done()
-						if startIdx >= endIdx { // Double check, no samples for this worker
-							return
+						if startIdx >= endIdx { return }
+
+						clone := nn.Clone()
+						clone.Params.IsTraining = true // Ensure clone is in training mode
+						if clone.Params.EnableBatchNorm {
+							for layerCloneIdx, mainLayer := range nn.Layers {
+								if mainLayer.UseBatchNormalization {
+									clone.Layers[layerCloneIdx].CurrentBatchMean = mainLayer.CurrentBatchMean
+									clone.Layers[layerCloneIdx].CurrentBatchVariance = mainLayer.CurrentBatchVariance
+								}
+							}
 						}
-
-						clone := nn.Clone()              // Each worker gets a clone
-						clone.zeroAccumulatedGradients() // Initialize clone's accumulators
-						var currentWorkerLoss float32 = 0.0
-
-						for k := startIdx; k < endIdx; k++ {
-							dataSample := shuffledTrainingData[k]
-							labelSample := shuffledExpectedOutputs[k]
+						clone.zeroAccumulatedGradients()
+						
+						currentWorkerLoss := float32(0.0)
+						for sCloneIdx := startIdx; sCloneIdx < endIdx; sCloneIdx++ {
+							dataSample := miniBatchData[sCloneIdx]
+							labelSample := miniBatchLabels[sCloneIdx]
 							sampleLoss := clone.backpropagateAndAccumulateForSample(dataSample, labelSample)
 							currentWorkerLoss += sampleLoss
+							// Store XNormalizedOutput from clone to main network (thread-unsafe, needs collection after)
+							if clone.Params.EnableBatchNorm {
+								for layerCloneIdx, cl := range clone.Layers {
+									if cl.UseBatchNormalization {
+										// This write is to the main network's slice from a goroutine.
+										// This needs to be collected and then written, or done serially.
+										// For now, let's assume this is collected by worker and aggregated later.
+										// nn.Layers[layerCloneIdx].LastXNormalizedBatch[sCloneIdx][neuronCloneIdx] = cl.Neurons[neuronCloneIdx].XNormalizedOutput
+									}
+								}
+							}
 						}
 						workerLosses[workerID] = currentWorkerLoss
-						workerClones[workerID] = clone
+						workerClones[workerID] = clone 
 					}(w, workerStart, workerEnd)
 				}
 				wg.Wait()
 
-				// Aggregate losses from workers
-				for _, l := range workerLosses {
-					miniBatchLoss += l
-				}
+				for _, l := range workerLosses { miniBatchLoss += l }
+				
+				// Aggregate gradients
+                for _, clone := range workerClones {
+                    if clone == nil { continue } // Should not happen if workers are managed well
+                    for layerIdx, cloneLayer := range clone.Layers {
+                        for neuronIdx, cloneNeuron := range cloneLayer.Neurons {
+                            mainNeuron := nn.Layers[layerIdx].Neurons[neuronIdx]
+                            if cloneNeuron.AccumulatedWeightGradients != nil {
+                                for wIdx, grad := range cloneNeuron.AccumulatedWeightGradients {
+                                    mainNeuron.AccumulatedWeightGradients[wIdx] += grad
+                                }
+                            }
+                            mainNeuron.AccumulatedBiasGradient += cloneNeuron.AccumulatedBiasGradient
+                        }
+                    }
+                }
+                // Collect LastXNormalizedBatch from clones (serially after join)
+                // This is safer than concurrent writes.
+                if nn.Params.EnableBatchNorm && nn.Params.IsTraining {
+                    for w := 0; w < numWorkers; w++ {
+                        clone := workerClones[w]
+                        if clone == nil { continue }
+                        workerStart := w * samplesPerWorker
+                        workerEnd := workerStart + samplesPerWorker
+                        if workerStart >= currentMiniBatchSize { continue }
+                        if workerEnd > currentMiniBatchSize { workerEnd = currentMiniBatchSize }
 
-				// Aggregate gradients from worker clones into the main network's accumulators
-				// The main network's accumulators were zeroed by nn.zeroAccumulatedGradients()
-				for _, clone := range workerClones {
-					if clone == nil { // Can happen if a worker had no samples
-						continue
-					}
-					for layerIdx, cloneLayer := range clone.Layers {
-						for neuronIdx, cloneNeuron := range cloneLayer.Neurons {
-							mainNeuron := nn.Layers[layerIdx].Neurons[neuronIdx]
-							if cloneNeuron.AccumulatedWeightGradients != nil {
-								for wIdx, grad := range cloneNeuron.AccumulatedWeightGradients {
-									mainNeuron.AccumulatedWeightGradients[wIdx] += grad
-								}
-							}
-							mainNeuron.AccumulatedBiasGradient += cloneNeuron.AccumulatedBiasGradient
-						}
-					}
-				}
+                        for sCloneIdx := workerStart; sCloneIdx < workerEnd; sCloneIdx++ {
+                             // We need the neuron's XNormalizedOutput from the clone's state *after its FeedForward*.
+                             // This means the clone's FeedForward must have stored it on its neurons.
+                             // The main network's LastXNormalizedBatch is populated using the clone's state.
+                            for layerIdx, cl := range clone.Layers {
+                                if cl.UseBatchNormalization {
+                                    for neuronIdx, cn := range cl.Neurons {
+                                        nn.Layers[layerIdx].LastXNormalizedBatch[sCloneIdx][neuronIdx] = cn.XNormalizedOutput
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 			}
-
-			// After processing all samples in the mini-batch (either single or multi-threaded), apply the averaged gradients
-			// Populate Gradients struct
+			// Optimizer applies gradients
 			gradients := Gradients{
 				WeightGradients: make([][][]float32, len(nn.Layers)),
 				BiasGradients:   make([][]float32, len(nn.Layers)),
