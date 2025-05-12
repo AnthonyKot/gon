@@ -25,16 +25,27 @@ type Neuron struct {
 	Weights  []float32
 	Bias     float32
 	Output   float32
-	Momentum []float32
 	// Fields for accumulating gradients in batch training
 	AccumulatedWeightGradients []float32
 	AccumulatedBiasGradient    float32
+	// Fields for momentum update (used by SGD optimizer)
+	WeightVelocities []float32
+	BiasVelocity     float32
 }
 
 type Layer struct {
 	Neurons    []*Neuron
 	Deltas     []float32
 	Activation ActivationFunction
+
+	// Batch Normalization fields
+	UseBatchNormalization bool
+	Gamma               []float32 // Learnable scale parameters, one per neuron
+	Beta                []float32 // Learnable shift parameters, one per neuron
+	RunningMean         []float32 // Moving average of means, one per neuron
+	RunningVariance     []float32 // Moving average of variances, one per neuron
+	Epsilon             float32   // Small constant for numerical stability
+	MomentumBN          float32   // Momentum for updating running mean/variance
 }
 
 // Represents the simplest NN.
@@ -46,49 +57,64 @@ type NeuralNetwork struct {
 }
 
 type Params struct {
-	Lr     float32
-	Decay  float32
-	L2     float32
-	// lowCap float32 // Removed: Unused
+	Lr                  float32
+	Decay               float32
+	L2                  float32
 	MomentumCoefficient float32 // Coefficient for momentum update (e.g., 0.9)
+	DropoutRate         float32 // Rate for dropout regularization (0.0 means disabled)
+	IsTraining          bool    // Flag to indicate if the network is in training mode (for dropout/BN)
+	EnableBatchNorm     bool    // Flag to enable Batch Normalization
 }
-
 
 // NewParams creates a Params struct with default values for non-specified fields.
 func NewParams(learningRate float32, decay float32, regularization float32) Params {
-	// Calls NewParamsFull, providing default values for momentum
 	defaults := defaultParams()
-	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient)
+	// Pass through existing defaults, and add DropoutRate & EnableBatchNorm from defaults
+	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient, defaults.DropoutRate, defaults.EnableBatchNorm)
 }
 
 // NewParamsFull creates a Params struct with all fields specified.
-func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32) Params {
+// IsTraining is intentionally omitted here as it's usually set dynamically.
+func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32, dropoutRate float32, enableBatchNorm bool) Params {
+	if dropoutRate < 0.0 || dropoutRate >= 1.0 {
+		dropoutRate = 0.0 // Ensure dropout rate is valid or disabled
+	}
 	return Params{
 		Lr:                  learningRate,
 		Decay:               decay,
 		L2:                  regularization,
 		MomentumCoefficient: momentumCoefficient,
+		DropoutRate:         dropoutRate,
+		EnableBatchNorm:     enableBatchNorm,
+		IsTraining:          false, // Default to false, should be set explicitly during training/evaluation phases
 	}
 }
 
 func defaultParams() *Params {
 	return &Params{
-		Lr:     0.01,
-		Decay:  0.95,
-		L2:     1e-4,
+		Lr:                  0.01,
+		Decay:               0.95,
+		L2:                  1e-4,
 		MomentumCoefficient: 0.9,
+		DropoutRate:         0.0,   // Dropout disabled by default
+		EnableBatchNorm:     false, // Batch Norm disabled by default
+		IsTraining:          false,
 	}
 }
 
 func DefaultNeuralNetwork(inputSize int, hidden []int, outputSize int) *NeuralNetwork {
 	params := defaultParams()
+	// Ensure IsTraining is false for default network creation for typical inference use
+	params.IsTraining = false 
 	nn := initialise(inputSize, hidden, outputSize, *params)
 	// optimizer and lossFunction fields removed from NeuralNetwork struct
 	return nn
 }
 
 // initialise creates and initializes the neural network structure, including layers, neurons, weights, and biases.
-func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
+func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params, hiddenActivation ActivationFunction, outputActivation ActivationFunction) *NeuralNetwork {
+	const defaultBNEpsilon = 1e-5
+	const defaultBNMomentum = 0.9
 
 	// Note: To support zero hidden layers (direct input to output), this function
 	// would need adjustments, particularly in how prevLayerNeuronCount is initialized
@@ -127,13 +153,34 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 		currentHiddenLayerSize := hiddenConfig[i]
 		hiddenLayer := &Layer{
 			Neurons:    make([]*Neuron, currentHiddenLayerSize),
-			Activation: ReLU{},
+			Activation: hiddenActivation,
 		}
+		if params.EnableBatchNorm {
+			hiddenLayer.UseBatchNormalization = true
+			hiddenLayer.Epsilon = defaultBNEpsilon
+			hiddenLayer.MomentumBN = defaultBNMomentum
+			hiddenLayer.Gamma = make([]float32, currentHiddenLayerSize)
+			hiddenLayer.Beta = make([]float32, currentHiddenLayerSize)
+			hiddenLayer.RunningMean = make([]float32, currentHiddenLayerSize)
+			hiddenLayer.RunningVariance = make([]float32, currentHiddenLayerSize)
+			for k := 0; k < currentHiddenLayerSize; k++ {
+				hiddenLayer.Gamma[k] = 1.0
+				hiddenLayer.Beta[k] = 0.0
+				hiddenLayer.RunningMean[k] = 0.0
+				hiddenLayer.RunningVariance[k] = 1.0
+			}
+		} else {
+			hiddenLayer.UseBatchNormalization = false
+		}
+
 		for j := 0; j < currentHiddenLayerSize; j++ {
 			hiddenLayer.Neurons[j] = &Neuron{
-				Weights:  make([]float32, prevLayerNeuronCount),
-				Bias:     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.Params),
-				Momentum: make([]float32, prevLayerNeuronCount),
+				Weights:                  make([]float32, prevLayerNeuronCount),
+				Bias:                     xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.Params),
+				AccumulatedWeightGradients: make([]float32, prevLayerNeuronCount),
+				AccumulatedBiasGradient:    0.0,
+				WeightVelocities:         make([]float32, prevLayerNeuronCount), // Initialize for SGD
+				BiasVelocity:             0.0,                                 // Initialize for SGD
 			}
 			for k := range hiddenLayer.Neurons[j].Weights {
 				hiddenLayer.Neurons[j].Weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.Params)
@@ -145,14 +192,21 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 
 	// Create Output Layer
 	outputLayer := &Layer{
-		Neurons:    make([]*Neuron, outputSize),
-		Activation: Linear{},
+		Neurons:               make([]*Neuron, outputSize),
+		Activation:            outputActivation,
+		UseBatchNormalization: false, // Typically BN is not applied directly before Softmax
 	}
+	// If one chose to apply BN to output layer, initialization would go here.
+	// For now, UseBatchNormalization is explicitly false for the output layer.
+
 	for l := 0; l < outputSize; l++ {
 		outputLayer.Neurons[l] = &Neuron{
-			Weights: make([]float32, prevLayerNeuronCount),
-			Bias:     xavierInit(prevLayerNeuronCount, outputSize, nn.Params),
-			Momentum: make([]float32, prevLayerNeuronCount),
+			Weights:                  make([]float32, prevLayerNeuronCount),
+			Bias:                     xavierInit(prevLayerNeuronCount, outputSize, nn.Params),
+			AccumulatedWeightGradients: make([]float32, prevLayerNeuronCount),
+			AccumulatedBiasGradient:    0.0,
+			WeightVelocities:         make([]float32, prevLayerNeuronCount), // Initialize for SGD
+			BiasVelocity:             0.0,                                 // Initialize for SGD
 		}
 		for k := range outputLayer.Neurons[l].Weights {
 			outputLayer.Neurons[l].Weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.Params)
@@ -163,8 +217,15 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 	return nn
 }
 
-func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params Params) *NeuralNetwork {
-	return initialise(inputSize, hiddenConfig, outputSize, params)
+func NewNeuralNetwork(inputSize int, hiddenConfig []int, outputSize int, params Params, hiddenActivation ActivationFunction, outputActivation ActivationFunction) *NeuralNetwork {
+	// Ensure default activations if nil is passed, though load.go should handle this.
+	if hiddenActivation == nil {
+		hiddenActivation = ReLU{}
+	}
+	if outputActivation == nil {
+		outputActivation = Linear{}
+	}
+	return initialise(inputSize, hiddenConfig, outputSize, params, hiddenActivation, outputActivation)
 }
 
 
@@ -178,63 +239,102 @@ func (nn *NeuralNetwork) FeedForward(input []float32) {
 	}
 	copy(nn.Input, input)
 
-	// Process the first layer (connected to the input)
-	for _, neuron := range nn.Layers[0].Neurons {
-		neuron.Output = neuron.Bias
-		for j := 0; j < len(nn.Input); j++ {
-			neuron.Output += nn.Input[j] * neuron.Weights[j]
-		}
-		neuron.Output = nn.Layers[0].Activation.Activate(neuron.Output)
-		neuron.Output = capValue(neuron.Output)
-	}
-	// Process hidden and output layers (i >= 1) using direct loops
-	for i := 1; i < len(nn.Layers); i++ {
-		for _, neuron := range nn.Layers[i].Neurons {
-			var sum64 float64 = float64(neuron.Bias)
-			for j := 0; j < len(nn.Layers[i-1].Neurons); j++ {
-				sum64 += float64(nn.Layers[i-1].Neurons[j].Output) * float64(neuron.Weights[j])
+	currentInput := nn.Input
+	for layerIdx, layer := range nn.Layers {
+		isCurrentLayerOutput := (layerIdx == len(nn.Layers)-1)
+		
+		// Temporary slice to hold pre-activation outputs for this layer (x values)
+		// This is per-sample. For true BN, batch-wide pre-activations are needed.
+		preActivationOutputs := make([]float32, len(layer.Neurons))
+
+		for neuronIdx, neuron := range layer.Neurons {
+			// Calculate weighted sum + bias
+			var sum float32 = neuron.Bias
+			for weightIdx, weight := range neuron.Weights {
+				sum += currentInput[weightIdx] * weight
 			}
-			neuron.Output = float32(sum64)
-			neuron.Output = nn.Layers[i].Activation.Activate(neuron.Output)
-			neuron.Output = capValue(neuron.Output)
+			preActivationOutputs[neuronIdx] = sum
 		}
-	}
-}
 
-// applyAveragedGradients updates the network's weights and biases using accumulated gradients.
-// It should be called after processing a batch and accumulating gradients.
-func (nn *NeuralNetwork) applyAveragedGradients(batchSize int, learningRate float32) {
-	if batchSize == 0 {
-		// Avoid division by zero if training data is empty
-		fmt.Println("applyAveragedGradients: batchSize is zero, skipping updates.")
-		return
-	}
-	fBatchSize := float32(batchSize)
+		// Apply Batch Normalization if enabled for this layer
+		if layer.UseBatchNormalization {
+			if nn.Params.IsTraining {
+				// --- Training Phase ---
+				// !!! IMPORTANT LIMITATION / PLACEHOLDER !!!
+				// True Batch Normalization requires mean and variance calculated *across the mini-batch* for each neuron.
+				// The current FeedForward processes one sample at a time.
+				// The following uses per-neuron running stats for calculation, which is incorrect for training's batch stats.
+				// This section needs to be refactored to use actual batch statistics when TrainMiniBatch is adapted.
+				// For now, this simulates using "batch" stats that are actually running stats, to get the structure in place.
+				// A more accurate placeholder might be to panic or log a warning.
+				
+				// Placeholder: Use running stats as stand-in for batch stats for this subtask.
+				// This is NOT correct for BN training logic but helps structure the code.
+				// In a real scenario, batchMean and batchVariance would be computed from all samples in the current mini-batch.
+				batchMean := layer.RunningMean // Conceptual placeholder
+				batchVariance := layer.RunningVariance // Conceptual placeholder
 
-	for _, layer := range nn.Layers {
-		for _, neuron := range layer.Neurons {
-			// Update weights
-			if neuron.AccumulatedWeightGradients != nil {
-				for wIdx := range neuron.Weights {
-					avgGrad64 := float64(neuron.AccumulatedWeightGradients[wIdx]) / float64(fBatchSize)
-					avgGrad64 += float64(nn.Params.L2) * float64(neuron.Weights[wIdx])
+				for neuronIdx := range layer.Neurons {
+					x := preActivationOutputs[neuronIdx]
+					// Normalize using (conceptual) batch stats
+					xNormalized := (x - batchMean[neuronIdx]) / float32(math.Sqrt(float64(batchVariance[neuronIdx] + layer.Epsilon)))
+					// Scale and shift
+					bnOutput := layer.Gamma[neuronIdx]*xNormalized + layer.Beta[neuronIdx]
+					preActivationOutputs[neuronIdx] = bnOutput // Update preActivationOutputs with BN result
 
-					momentum64 := float64(nn.Params.MomentumCoefficient)*float64(neuron.Momentum[wIdx]) + float64(learningRate)*avgGrad64
-					neuron.Momentum[wIdx] = float32(momentum64)
-					neuron.Weights[wIdx] = float32(float64(neuron.Weights[wIdx]) - momentum64)
-					neuron.Weights[wIdx] = capValue(neuron.Weights[wIdx])
+					// Update running mean and variance (this part is standard)
+					// Note: batchMean[neuronIdx] and batchVariance[neuronIdx] here are placeholders.
+					// Real batchMean/Variance for this neuron would be used.
+					layer.RunningMean[neuronIdx] = layer.MomentumBN*layer.RunningMean[neuronIdx] + (1.0-layer.MomentumBN)*batchMean[neuronIdx] 
+					layer.RunningVariance[neuronIdx] = layer.MomentumBN*layer.RunningVariance[neuronIdx] + (1.0-layer.MomentumBN)*batchVariance[neuronIdx]
+				}
+			} else {
+				// --- Inference Phase ---
+				for neuronIdx := range layer.Neurons {
+					x := preActivationOutputs[neuronIdx]
+					// Normalize using running stats
+					xNormalized := (x - layer.RunningMean[neuronIdx]) / float32(math.Sqrt(float64(layer.RunningVariance[neuronIdx] + layer.Epsilon)))
+					// Scale and shift
+					bnOutput := layer.Gamma[neuronIdx]*xNormalized + layer.Beta[neuronIdx]
+					preActivationOutputs[neuronIdx] = bnOutput
 				}
 			}
+		}
 
-			// Update bias
-			avgBiasGrad64 := float64(neuron.AccumulatedBiasGradient) / float64(fBatchSize)
-			neuron.Bias = float32(float64(neuron.Bias) - float64(learningRate)*avgBiasGrad64)
-			neuron.Bias = capValue(neuron.Bias)
+		// Apply Activation Function and Dropout
+		for neuronIdx, neuron := range layer.Neurons {
+			activatedOutput := layer.Activation.Activate(preActivationOutputs[neuronIdx])
+			neuron.Output = capValue(activatedOutput)
+
+			// Apply Dropout if it's a hidden layer and we are training
+			// Dropout is applied *after* batch normalization and activation
+			if !isCurrentLayerOutput && nn.Params.IsTraining && nn.Params.DropoutRate > 0 {
+				if rand.Float32() < nn.Params.DropoutRate {
+					neuron.Output = 0.0
+				} else {
+					// Inverted dropout scaling
+					neuron.Output /= (1.0 - nn.Params.DropoutRate)
+				}
+			}
+		}
+
+		// Prepare output of this layer as input for the next layer
+		if layerIdx < len(nn.Layers)-1 {
+			// Ensure PrevLayerOutputsBuffer is large enough
+			// This logic should be sound from previous setup.
+			if cap(nn.PrevLayerOutputsBuffer) < len(layer.Neurons) {
+				nn.PrevLayerOutputsBuffer = make([]float32, len(layer.Neurons))
+			}
+			tempOutputBuffer := nn.PrevLayerOutputsBuffer[:len(layer.Neurons)]
+			for k, neuron := range layer.Neurons {
+				tempOutputBuffer[k] = neuron.Output
+			}
+			currentInput = tempOutputBuffer
 		}
 	}
 }
 
-// The old UpdateWeights function is now replaced by applyAveragedGradients
+// The old UpdateWeights function is now replaced by the Optimizer interface
 // and the gradient accumulation logic within backpropagateAndAccumulateForSample.
 
 // TrainSGD function removed as unused in the current main application flow.
@@ -255,23 +355,51 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 		cloneLayer := &Layer{
 			Neurons:    make([]*Neuron, len(layer.Neurons)),
 			Activation: layer.Activation,
+			UseBatchNormalization: layer.UseBatchNormalization,
+			Epsilon:             layer.Epsilon,
+			MomentumBN:          layer.MomentumBN,
+		}
+		if layer.UseBatchNormalization {
+			cloneLayer.Gamma = make([]float32, len(layer.Gamma))
+			copy(cloneLayer.Gamma, layer.Gamma)
+			cloneLayer.Beta = make([]float32, len(layer.Beta))
+			copy(cloneLayer.Beta, layer.Beta)
+			cloneLayer.RunningMean = make([]float32, len(layer.RunningMean))
+			copy(cloneLayer.RunningMean, layer.RunningMean)
+			cloneLayer.RunningVariance = make([]float32, len(layer.RunningVariance))
+			copy(cloneLayer.RunningVariance, layer.RunningVariance)
 		}
 
 		// Deep copy all neurons
 		for j, neuron := range layer.Neurons {
 			cloneNeuron := &Neuron{
-				Weights:  make([]float32, len(neuron.Weights)),
-				Bias:     neuron.Bias,
-				Output:   neuron.Output,
-				Momentum: make([]float32, len(neuron.Momentum)), // Initialize momentum slice
+				Weights:                    make([]float32, len(neuron.Weights)),
+				Bias:                       neuron.Bias,
+				Output:                     neuron.Output,
+				AccumulatedWeightGradients: make([]float32, len(neuron.Weights)), // Initialize based on weights length
+				AccumulatedBiasGradient:    neuron.AccumulatedBiasGradient,
+				WeightVelocities:           make([]float32, len(neuron.Weights)), // Initialize based on weights length
+				BiasVelocity:               neuron.BiasVelocity,
 			}
 
 			// Copy weights
 			copy(cloneNeuron.Weights, neuron.Weights)
-			// Copy momentum
-			if neuron.Momentum != nil { // Guard against nil if original momentum could be nil (though init suggests it won't be)
-				copy(cloneNeuron.Momentum, neuron.Momentum)
+			// Copy accumulated gradients
+			if neuron.AccumulatedWeightGradients != nil {
+				copy(cloneNeuron.AccumulatedWeightGradients, neuron.AccumulatedWeightGradients)
+			} else {
+				// Ensure the slice is initialized if the source was nil, matching initialization logic
+				cloneNeuron.AccumulatedWeightGradients = make([]float32, len(neuron.Weights))
 			}
+			// Copy weight velocities
+			if neuron.WeightVelocities != nil {
+				copy(cloneNeuron.WeightVelocities, neuron.WeightVelocities)
+			} else {
+				// Ensure the slice is initialized if the source was nil, matching initialization logic
+				cloneNeuron.WeightVelocities = make([]float32, len(neuron.Weights))
+			}
+			// BiasVelocity is a value type, already copied.
+
 			cloneLayer.Neurons[j] = cloneNeuron
 		}
 
@@ -433,7 +561,31 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 			}
 
 			// After processing all samples in the mini-batch (either single or multi-threaded), apply the averaged gradients
-			nn.applyAveragedGradients(currentMiniBatchSize, nn.Params.Lr)
+			// Populate Gradients struct
+			gradients := Gradients{
+				WeightGradients: make([][][]float32, len(nn.Layers)),
+				BiasGradients:   make([][]float32, len(nn.Layers)),
+			}
+			for i, layer := range nn.Layers {
+				gradients.WeightGradients[i] = make([][]float32, len(layer.Neurons))
+				gradients.BiasGradients[i] = make([]float32, len(layer.Neurons))
+				for j, neuron := range layer.Neurons {
+					// Ensure AccumulatedWeightGradients is initialized if it was nil
+					if neuron.AccumulatedWeightGradients == nil {
+						neuron.AccumulatedWeightGradients = make([]float32, len(neuron.Weights))
+					}
+					gradients.WeightGradients[i][j] = neuron.AccumulatedWeightGradients
+					gradients.BiasGradients[i][j] = neuron.AccumulatedBiasGradient
+				}
+			}
+
+			// Instantiate optimizer and apply gradients
+			optimizer := &SGD{} // Assuming SGD is the optimizer to use.
+			err := optimizer.Apply(&nn.Params, nn.Layers, &gradients, currentMiniBatchSize)
+			if err != nil {
+				// Handle error, e.g., log it or return from the function
+				fmt.Printf("Error applying gradients: %v\n", err)
+			}
 
 			totalEpochLoss += miniBatchLoss
 			samplesProcessedInEpoch += currentMiniBatchSize
