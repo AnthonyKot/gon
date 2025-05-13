@@ -46,6 +46,39 @@ func (o *SGD) Apply(params *Params, layers []*Layer, accumulatedGradients *Gradi
 				neuron.BiasVelocity = velocity
 			}
 		}
+
+		// If Batch Normalization is used for this layer, update Gamma and Beta
+		if layer.UseBatchNormalization {
+			if layer.AccumulatedGammaGradients == nil || layer.AccumulatedBetaGradients == nil {
+				// Or handle this potential error more gracefully, though they should be initialized.
+				// For now, skip if they are not initialized to prevent panic.
+				// Consider logging a warning or returning an error if this state is unexpected.
+				continue
+			}
+			if len(layer.AccumulatedGammaGradients) != len(layer.Neurons) || len(layer.AccumulatedBetaGradients) != len(layer.Neurons) {
+				// This would indicate a mismatch in initialization or update logic.
+				// Skip, log, or error. For now, skip.
+				continue
+			}
+
+			for j := range layer.Neurons { // Iterate using index `j` for Gamma and Beta which are per-neuron
+				// Update Gamma
+				if j < len(layer.Gamma) && j < len(layer.AccumulatedGammaGradients) { // Boundary check
+					gammaGradient := layer.AccumulatedGammaGradients[j] / float32(batchSize)
+					layer.Gamma[j] -= params.Lr * gammaGradient
+					// Optional: Add momentum for Gamma here if desired in the future
+					// (would require layer.GammaVelocities, similar to neuron.WeightVelocities)
+				}
+
+				// Update Beta
+				if j < len(layer.Beta) && j < len(layer.AccumulatedBetaGradients) { // Boundary check
+					betaGradient := layer.AccumulatedBetaGradients[j] / float32(batchSize)
+					layer.Beta[j] -= params.Lr * betaGradient
+					// Optional: Add momentum for Beta here if desired in the future
+					// (would require layer.BetaVelocities)
+				}
+			}
+		}
 	}
 	return nil
 }
