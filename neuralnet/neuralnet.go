@@ -94,23 +94,68 @@ type Params struct {
 	Beta1               float32 // Adam optimizer: exponential decay rate for the first moment estimates
 	Beta2               float32 // Adam optimizer: exponential decay rate for the second-moment estimates
 	EpsilonAdam         float32 // Adam optimizer: small constant for numerical stability
+
+	// New LR scheduling parameters
+	InitialLr   float32
+	WarmupSteps int
+	TargetLr    float32  // Target LR after warmup / base LR for decay schedules
+	DecaySteps  int      // e.g., for cosine decay, the number of steps for one cycle or total decay
+	LrSchedule  string   // e.g., "cosine", "exponential", "none"
 }
 
 // NewParams creates a Params struct with default values for non-specified fields.
 func NewParams(learningRate float32, decay float32, regularization float32) Params {
 	defaults := defaultParams()
-	// Pass through existing defaults, and add DropoutRate & EnableBatchNorm from defaults, plus new Adam params
-	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient, defaults.DropoutRate, defaults.EnableBatchNorm, defaults.Beta1, defaults.Beta2, defaults.EpsilonAdam)
+	// The learningRate argument to NewParams becomes the TargetLr for NewParamsFull.
+	// Other LR scheduling parameters are taken from defaults.
+	// NewParamsFull will correctly set the initial Lr field based on these.
+	return NewParamsFull(
+		learningRate, // This is targetLrActual for NewParamsFull
+		decay,
+		regularization,
+		defaults.MomentumCoefficient,
+		defaults.DropoutRate,
+		defaults.EnableBatchNorm,
+		defaults.Beta1,
+		defaults.Beta2,
+		defaults.EpsilonAdam,
+		// New LR scheduling parameters from defaults
+		defaults.InitialLr,
+		defaults.WarmupSteps,
+		defaults.DecaySteps,
+		defaults.LrSchedule,
+	)
 }
 
 // NewParamsFull creates a Params struct with all fields specified.
 // IsTraining is intentionally omitted here as it's usually set dynamically.
-func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32, dropoutRate float32, enableBatchNorm bool, beta1 float32, beta2 float32, epsilonAdam float32) Params {
+func NewParamsFull(
+	targetLrActual float32, // Renamed from learningRate for clarity, this is the target LR
+	decay float32,
+	regularization float32,
+	momentumCoefficient float32,
+	dropoutRate float32,
+	enableBatchNorm bool,
+	beta1 float32,
+	beta2 float32,
+	epsilonAdam float32,
+	// New LR scheduling parameters
+	initialLr float32,
+	warmupSteps int,
+	decaySteps int,
+	lrSchedule string,
+) Params {
 	if dropoutRate < 0.0 || dropoutRate >= 1.0 {
 		dropoutRate = 0.0 // Ensure dropout rate is valid or disabled
 	}
+
+	currentActualLr := targetLrActual
+	if warmupSteps > 0 {
+		currentActualLr = initialLr
+	}
+
 	return Params{
-		Lr:                  learningRate,
+		Lr:                  currentActualLr, // Set based on warmup
 		Decay:               decay,
 		L2:                  regularization,
 		MomentumCoefficient: momentumCoefficient,
@@ -119,22 +164,2514 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
 		Beta1:               beta1,
 		Beta2:               beta2,
 		EpsilonAdam:         epsilonAdam,
-		IsTraining:          false, // Default to false, should be set explicitly during training/evaluation phases
+		IsTraining:          false, // Default to false, should be set explicitly
+
+		InitialLr:   initialLr,
+		WarmupSteps: warmupSteps,
+		TargetLr:    targetLrActual, // This is the learningRate argument
+		DecaySteps:  decaySteps,
+		LrSchedule:  lrSchedule,
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		// Also clamp to a minimum of 0.0 for safety, though stepAfterWarmup should be non-negative.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { 
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingSteps: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingSteps int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingSteps - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingSteps <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// Clamp cosineFrac to a maximum of 1.0 to ensure LR doesn't increase after reaching the minimum.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps intended for the entire training process (e.g., totalEpochs * stepsPerEpoch).
+//   Used to determine duration of cosine decay if params.DecaySteps is not explicitly set.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// To prevent cosineFrac from going beyond 1.0 (which would make cos(Pi * cosineFrac) > -1),
+		// we clamp cosineFrac to a maximum of 1.0.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps that the decay phase should span.
+//   Used for cosine decay if params.DecaySteps <= 0, where it's typically
+//   (totalEpochs * stepsPerEpoch) - params.WarmupSteps.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, use totalTrainingStepsForDecay,
+			// which represents the intended duration of the decay phase after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay 
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay was <= 0,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// To prevent cosineFrac from going beyond 1.0 (which would make cos(Pi * cosineFrac) > -1),
+		// we clamp cosineFrac to a maximum of 1.0.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps over which decay is scheduled if params.DecaySteps is not set.
+//   Typically totalEpochs * stepsPerEpoch. Used for cosine decay if params.DecaySteps <= 0.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero, though the condition already checks.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// To prevent cosineFrac from going beyond 1.0 (which would make cos(Pi * cosineFrac) > -1),
+		// we clamp cosineFrac to a maximum of 1.0.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps over which decay is scheduled if params.DecaySteps is not set.
+//   Typically totalEpochs * stepsPerEpoch.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero, though the condition already checks.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// To prevent cosineFrac from going beyond 1.0 (which would make cos(Pi * cosineFrac) > -1),
+		// we clamp cosineFrac to a maximum of 1.0.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps over which decay is scheduled if params.DecaySteps is not set.
+//   Typically totalEpochs * stepsPerEpoch.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero, though the condition already checks.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// To prevent cosineFrac from going beyond 1.0 (which would make cos(Pi * cosineFrac) > -1),
+		// we clamp cosineFrac to a maximum of 1.0.
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= params.Decay) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
+	}
+}
+
+// calculateCurrentLr determines the learning rate for the current training step
+// based on warm-up and decay schedules.
+// - currentGlobalStep: 0-indexed count of mini-batches processed so far.
+// - totalTrainingStepsForDecay: Total steps over which decay is scheduled.
+//   For cosine, if params.DecaySteps is > 0, this is used directly for the decay phase duration.
+//   If params.DecaySteps <= 0, then totalTrainingStepsForDecay - params.WarmupSteps is used.
+func calculateCurrentLr(params *Params, currentGlobalStep int, totalTrainingStepsForDecay int) float32 {
+	// Phase 1: Warm-up
+	if params.WarmupSteps > 0 && currentGlobalStep < params.WarmupSteps {
+		// Ensure WarmupSteps is positive to avoid division by zero.
+		// If InitialLr and TargetLr are the same, or WarmupSteps is 1, this still works.
+		// If WarmupSteps is 0, this block is skipped.
+		return params.InitialLr + (params.TargetLr-params.InitialLr)*float32(currentGlobalStep)/float32(params.WarmupSteps)
+	}
+
+	// currentGlobalStep is now >= params.WarmupSteps.
+	// The learning rate at the end of warmup (or at the start if no warmup) is params.TargetLr.
+
+	switch params.LrSchedule {
+	case "cosine":
+		stepAfterWarmup := currentGlobalStep - params.WarmupSteps
+		
+		decayStepsToUse := params.DecaySteps
+		if decayStepsToUse <= 0 {
+			// If DecaySteps is not explicitly set, decay over all steps remaining after warmup,
+			// using totalTrainingStepsForDecay as the total duration of training.
+			decayStepsToUse = totalTrainingStepsForDecay - params.WarmupSteps
+		}
+		
+		// Ensure decayStepsToUse is positive. If not (e.g., totalTrainingStepsForDecay <= params.WarmupSteps,
+		// or DecaySteps was explicitly non-positive), it means no decay phase or invalid config.
+		// In this case, LR remains TargetLr (or could be a future params.MinLr).
+		if decayStepsToUse <= 0 {
+			return params.TargetLr 
+		}
+
+		// Calculate cosine decay.
+		// If current step is beyond the defined decay period, LR should be at its minimum.
+		// For cosine, this is when (stepAfterWarmup / decayStepsToUse) >= 1.
+		// cos(pi * 1) = -1, so lr = TargetLr * 0.5 * (1 - 1) = 0.
+		// To prevent cosineFrac from going beyond 1.0 which would make cos(Pi * cosineFrac) > -1
+		cosineFrac := float64(stepAfterWarmup) / float64(decayStepsToUse)
+		if cosineFrac > 1.0 {
+			cosineFrac = 1.0
+		} else if cosineFrac < 0.0 { // Should not happen if stepAfterWarmup is always >=0
+			cosineFrac = 0.0
+		}
+		
+		cosineDecayFactor := 0.5 * (1.0 + math.Cos(math.Pi*cosineFrac))
+		return params.TargetLr * float32(cosineDecayFactor)
+
+	case "exponential":
+		// For "exponential" schedule, this function returns the base TargetLr after warmup.
+		// The actual decay (Lr *= DecayFactor) is applied per-epoch in the TrainMiniBatch loop.
+		return params.TargetLr
+
+	case "none":
+		return params.TargetLr
+
+	default:
+		// Optionally log a warning for unrecognized schedules
+		// fmt.Printf("Warning: Unrecognized LrSchedule '%s'. Using TargetLr.\n", params.LrSchedule)
+		return params.TargetLr
 	}
 }
 
 func defaultParams() *Params {
+	// Define the defaults for LR scheduling parameters
+	defaultInitialLr := float32(0.0)    // Or a small value like 1e-6 if preferred for active warmup
+	defaultWarmupSteps := 0
+	defaultTargetLr := float32(0.01)   // Base LR after warmup
+	defaultDecaySteps := 0             // e.g., for cosine, if 0, might mean decay over total training steps minus warmup
+	defaultLrSchedule := "exponential" // Default to current behavior
+
+	// Determine the initial current Lr based on warmup settings
+	currentActualLr := defaultTargetLr
+	if defaultWarmupSteps > 0 {
+		currentActualLr = defaultInitialLr
+	}
+
 	return &Params{
-		Lr:                  0.01,
-		Decay:               0.95,
+		Lr:                  currentActualLr, // Current effective learning rate
+		Decay:               0.95,            // Kept for 'exponential' schedule or legacy
 		L2:                  1e-4,
 		MomentumCoefficient: 0.9,
-		DropoutRate:         0.0,   // Dropout disabled by default
-		EnableBatchNorm:     false, // Batch Norm disabled by default
+		DropoutRate:         0.0,
+		EnableBatchNorm:     false,
 		IsTraining:          false,
 		Beta1:               0.9,
 		Beta2:               0.999,
 		EpsilonAdam:         1e-8,
+
+		InitialLr:   defaultInitialLr,
+		WarmupSteps: defaultWarmupSteps,
+		TargetLr:    defaultTargetLr,
+		DecaySteps:  defaultDecaySteps,
+		LrSchedule:  defaultLrSchedule,
 	}
 }
 
@@ -539,6 +3076,16 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 		batchSize = numSamples // Fallback to full batch if batchSize is invalid
 	}
 
+	currentGlobalStep := 0
+	numBatchesPerEpoch := 0
+	if batchSize > 0 {
+		numBatchesPerEpoch = (numSamples + batchSize - 1) / batchSize
+	} else if numSamples > 0 { // if batchsize is 0 or less, treat as full batch
+		numBatchesPerEpoch = 1
+	}
+	// totalTrainingSteps is used by calculateCurrentLr for context, esp. for cosine decay if params.DecaySteps is 0
+	totalTrainingSteps := epochs * numBatchesPerEpoch 
+
 	for e := 0; e < epochs; e++ {
 		var totalEpochLoss float32 = 0.0
 		var samplesProcessedInEpoch int = 0
@@ -565,6 +3112,11 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 
 			nn.zeroAccumulatedGradients()
 			var miniBatchLoss float32 = 0.0
+
+			// Update learning rate at the start of the mini-batch processing
+			if numBatchesPerEpoch > 0 { // Only update LR if there are batches to process
+				nn.Params.Lr = calculateCurrentLr(&nn.Params, currentGlobalStep, totalTrainingSteps)
+			}
 
 			if nn.Params.EnableBatchNorm && nn.Params.IsTraining {
 				// Step A: Collect PreBNAOutput for all samples in the batch for each BN layer.
@@ -1178,6 +3730,7 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 
 			totalEpochLoss += miniBatchLoss
 			samplesProcessedInEpoch += currentMiniBatchSize
+			currentGlobalStep++ // Increment global step counter after processing the batch
 		}
 
 		averageEpochLoss := float32(0.0)
@@ -1187,8 +3740,15 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 
 		fmt.Printf("Loss MiniBatch Epoch %d = %.2f (LR: %.5f)\n", e, averageEpochLoss, nn.Params.Lr)
 
-		// Apply learning rate decay at the end of each epoch.
-		nn.Params.Lr *= nn.Params.Decay
+		// Apply learning rate decay for "exponential" schedule at the end of each epoch.
+		// For other schedules like "cosine" or "none", calculateCurrentLr handles the LR for each step directly.
+		if nn.Params.LrSchedule == "exponential" {
+			// Decay TargetLr only if the warm-up phase is complete.
+			// currentGlobalStep reflects the total number of batches processed up to the end of this epoch.
+			if currentGlobalStep >= nn.Params.WarmupSteps {
+				nn.Params.TargetLr *= nn.Params.Decay
+			}
+		}
 	} // End of epoch loop
 }
 
