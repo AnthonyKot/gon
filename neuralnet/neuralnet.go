@@ -31,6 +31,11 @@ type Neuron struct {
 	// Fields for momentum update (used by SGD optimizer)
 	WeightVelocities []float32
 	BiasVelocity     float32
+	// Adam optimizer moment estimates
+	WeightM []float32 // Adam: first moment vector for weights
+	WeightV []float32 // Adam: second moment vector for weights
+	BiasM   float32   // Adam: first moment for bias
+	BiasV   float32   // Adam: second moment for bias
 	// Batch Normalization: Temporary storage for values
 	PreBNAOutput        float32 // Pre-BN activation (z = w*x + b)
 	XNormalizedOutput float32 // Post-BN, pre-scale/shift ( (z - mean) / sqrt(var + eps) )
@@ -63,6 +68,11 @@ type Layer struct {
 	// Batch Normalization: Temporary sums for backpropagation
 	TempSumDldXhat     []float32 // Temporary sum of dL/dX_hat across the batch, one per neuron
 	TempSumDldXhatXhat []float32 // Temporary sum of dL/dX_hat * X_hat across the batch, one per neuron
+	// Adam moment estimates for BN parameters (if UseBatchNormalization is true)
+	GammaM []float32
+	GammaV []float32
+	BetaM  []float32
+	BetaV  []float32
 }
 
 // Represents the simplest NN.
@@ -81,18 +91,21 @@ type Params struct {
 	DropoutRate         float32 // Rate for dropout regularization (0.0 means disabled)
 	IsTraining          bool    // Flag to indicate if the network is in training mode (for dropout/BN)
 	EnableBatchNorm     bool    // Flag to enable Batch Normalization
+	Beta1               float32 // Adam optimizer: exponential decay rate for the first moment estimates
+	Beta2               float32 // Adam optimizer: exponential decay rate for the second-moment estimates
+	EpsilonAdam         float32 // Adam optimizer: small constant for numerical stability
 }
 
 // NewParams creates a Params struct with default values for non-specified fields.
 func NewParams(learningRate float32, decay float32, regularization float32) Params {
 	defaults := defaultParams()
-	// Pass through existing defaults, and add DropoutRate & EnableBatchNorm from defaults
-	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient, defaults.DropoutRate, defaults.EnableBatchNorm)
+	// Pass through existing defaults, and add DropoutRate & EnableBatchNorm from defaults, plus new Adam params
+	return NewParamsFull(learningRate, decay, regularization, defaults.MomentumCoefficient, defaults.DropoutRate, defaults.EnableBatchNorm, defaults.Beta1, defaults.Beta2, defaults.EpsilonAdam)
 }
 
 // NewParamsFull creates a Params struct with all fields specified.
 // IsTraining is intentionally omitted here as it's usually set dynamically.
-func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32, dropoutRate float32, enableBatchNorm bool) Params {
+func NewParamsFull(learningRate float32, decay float32, regularization float32, momentumCoefficient float32, dropoutRate float32, enableBatchNorm bool, beta1 float32, beta2 float32, epsilonAdam float32) Params {
 	if dropoutRate < 0.0 || dropoutRate >= 1.0 {
 		dropoutRate = 0.0 // Ensure dropout rate is valid or disabled
 	}
@@ -103,6 +116,9 @@ func NewParamsFull(learningRate float32, decay float32, regularization float32, 
 		MomentumCoefficient: momentumCoefficient,
 		DropoutRate:         dropoutRate,
 		EnableBatchNorm:     enableBatchNorm,
+		Beta1:               beta1,
+		Beta2:               beta2,
+		EpsilonAdam:         epsilonAdam,
 		IsTraining:          false, // Default to false, should be set explicitly during training/evaluation phases
 	}
 }
@@ -116,6 +132,9 @@ func defaultParams() *Params {
 		DropoutRate:         0.0,   // Dropout disabled by default
 		EnableBatchNorm:     false, // Batch Norm disabled by default
 		IsTraining:          false,
+		Beta1:               0.9,
+		Beta2:               0.999,
+		EpsilonAdam:         1e-8,
 	}
 }
 
@@ -185,6 +204,11 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 			hiddenLayer.CurrentBatchDLdXHat = nil                                         // Initialize new field
 			hiddenLayer.TempSumDldXhat = nil                                              // Initialize new field
 			hiddenLayer.TempSumDldXhatXhat = nil                                          // Initialize new field
+			// Initialize Adam moment estimates for BN parameters
+			hiddenLayer.GammaM = make([]float32, currentHiddenLayerSize)
+			hiddenLayer.GammaV = make([]float32, currentHiddenLayerSize)
+			hiddenLayer.BetaM = make([]float32, currentHiddenLayerSize)
+			hiddenLayer.BetaV = make([]float32, currentHiddenLayerSize)
 			for k := 0; k < currentHiddenLayerSize; k++ {
 				hiddenLayer.Gamma[k] = 1.0
 				hiddenLayer.Beta[k] = 0.0
@@ -203,6 +227,10 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 				AccumulatedBiasGradient:    0.0,
 				WeightVelocities:         make([]float32, prevLayerNeuronCount), // Initialize for SGD
 				BiasVelocity:             0.0,                                 // Initialize for SGD
+				WeightM:                  make([]float32, prevLayerNeuronCount), // Adam
+				WeightV:                  make([]float32, prevLayerNeuronCount), // Adam
+				BiasM:                    0.0,                                 // Adam
+				BiasV:                    0.0,                                 // Adam
 			}
 			for k := range hiddenLayer.Neurons[j].Weights {
 				hiddenLayer.Neurons[j].Weights[k] = xavierInit(prevLayerNeuronCount, currentHiddenLayerSize, nn.Params)
@@ -229,6 +257,10 @@ func initialise(inputSize int, hiddenConfig []int, outputSize int, params Params
 			AccumulatedBiasGradient:    0.0,
 			WeightVelocities:         make([]float32, prevLayerNeuronCount), // Initialize for SGD
 			BiasVelocity:             0.0,                                 // Initialize for SGD
+				WeightM:                  make([]float32, prevLayerNeuronCount), // Adam
+				WeightV:                  make([]float32, prevLayerNeuronCount), // Adam
+				BiasM:                    0.0,                                 // Adam
+				BiasV:                    0.0,                                 // Adam
 		}
 		for k := range outputLayer.Neurons[l].Weights {
 			outputLayer.Neurons[l].Weights[k] = xavierInit(prevLayerNeuronCount, outputSize, nn.Params)
@@ -375,6 +407,15 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 			cloneLayer.CurrentBatchDLdXHat = nil // Initialize as nil, will be handled by TrainMiniBatch or backprop
 			cloneLayer.TempSumDldXhat = nil     // Initialize new field
 			cloneLayer.TempSumDldXhatXhat = nil // Initialize new field
+			// Adam moment estimates for BN parameters
+			cloneLayer.GammaM = make([]float32, len(layer.GammaM))
+			copy(cloneLayer.GammaM, layer.GammaM)
+			cloneLayer.GammaV = make([]float32, len(layer.GammaV))
+			copy(cloneLayer.GammaV, layer.GammaV)
+			cloneLayer.BetaM = make([]float32, len(layer.BetaM))
+			copy(cloneLayer.BetaM, layer.BetaM)
+			cloneLayer.BetaV = make([]float32, len(layer.BetaV))
+			copy(cloneLayer.BetaV, layer.BetaV)
 			// Note: Not cloning CurrentBatchMean, CurrentBatchVariance, LastInputPreBNBatch, LastXNormalizedBatch
 		}
 
@@ -388,6 +429,10 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 				AccumulatedBiasGradient:    neuron.AccumulatedBiasGradient,
 				WeightVelocities:           make([]float32, len(neuron.Weights)), // Initialize based on weights length
 				BiasVelocity:               neuron.BiasVelocity,
+				WeightM:                    make([]float32, len(neuron.WeightM)), // Adam
+				WeightV:                    make([]float32, len(neuron.WeightV)), // Adam
+				BiasM:                      neuron.BiasM,                         // Adam
+				BiasV:                      neuron.BiasV,                         // Adam
 			}
 
 			// Copy weights
@@ -406,7 +451,18 @@ func (nn *NeuralNetwork) Clone() *NeuralNetwork {
 				// Ensure the slice is initialized if the source was nil, matching initialization logic
 				cloneNeuron.WeightVelocities = make([]float32, len(neuron.Weights))
 			}
-			// BiasVelocity is a value type, already copied.
+			// Copy Adam moment estimates for weights
+			if neuron.WeightM != nil {
+				copy(cloneNeuron.WeightM, neuron.WeightM)
+			} else {
+				cloneNeuron.WeightM = make([]float32, len(neuron.Weights))
+			}
+			if neuron.WeightV != nil {
+				copy(cloneNeuron.WeightV, neuron.WeightV)
+			} else {
+				cloneNeuron.WeightV = make([]float32, len(neuron.Weights))
+			}
+			// BiasM and BiasV are value types, already copied.
 
 			cloneLayer.Neurons[j] = cloneNeuron
 		}
@@ -1113,7 +1169,7 @@ func (nn *NeuralNetwork) TrainMiniBatch(trainingData [][]float32, expectedOutput
 			}
 
 			// Instantiate optimizer and apply gradients
-			optimizer := &SGD{} // Assuming SGD is the optimizer to use.
+			optimizer := &Adam{t: 0} // Initialize Adam optimizer with timestep t=0
 			err := optimizer.Apply(&nn.Params, nn.Layers, &gradients, currentMiniBatchSize)
 			if err != nil {
 				// Handle error, e.g., log it or return from the function
