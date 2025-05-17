@@ -790,7 +790,7 @@ func main() {
 	imgs = applyPreprocessing(imgs, trainingSetSize, preprocessMethod) // imgs is now preprocessed [][][]float64
 
 	// Now convert preprocessed images to the format expected by the neural network
-	inputs = convertImagesToInputs(imgs) // This converts [][][]float64 to [][]float32
+  inputs = convertImagesToInputs(imgs) // This converts [][][]float64 to [][]float32
 
 	to := trainingSetSize // 'to' is the end index (exclusive) for training data
 	epochs := *flagEpochs
