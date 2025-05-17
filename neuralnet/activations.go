@@ -1,6 +1,9 @@
 package neuralnet
 
-import "math"
+import (
+   "fmt"
+   "math"
+)
 
 type ActivationFunction interface {
 	Activate(x float32) float32

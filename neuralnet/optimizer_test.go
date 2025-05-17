@@ -20,7 +20,22 @@ func TestSGDApplyValidBatchSize(t *testing.T) {
 	const epsilon = 1e-6 // Tolerance for float comparisons
 
 	// 1. Network Setup
-	nn := NewNeuralNetwork(1, []int{1}, 1, NewParamsFull(0.1, 0, 0.01, 0.9)) // Lr, Decay, L2, Momentum
+	// Create a neural network with specified parameters and default activations (ReLU for hidden, Linear for output)
+	// NewParamsFull: learningRate, decay, regularization (L2), momentumCoefficient, dropoutRate, enableBatchNorm
+	nn := NewNeuralNetwork(
+		1,                    // input size
+		[]int{1},             // hidden layer config
+		1,                    // output size
+		NewParamsFull(
+			0.1,  // learningRate
+			0,    // decay
+			0.01, // regularization (L2)
+			0.9,  // momentumCoefficient
+			0.0,  // dropoutRate
+			false,// enableBatchNorm
+		),
+		ReLU{}, Linear{}, // hidden and output activations
+	)
 	sgd := &SGD{}
 	batchSize := 1
 

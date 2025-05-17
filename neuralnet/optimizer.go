@@ -11,6 +11,12 @@ type Gradients struct {
 	BiasGradients   [][]float32
 }
 
+// Gradients holds accumulated gradients for all layers and neurons.
+type Gradients struct {
+	WeightGradients [][][]float32
+	BiasGradients   [][]float32
+}
+
 // Optimizer defines interface to apply averaged gradients and adjust learning rate.
 type Optimizer interface {
 	Apply(params *Params, layers []*Layer, accumulatedGradients *Gradients, batchSize int) error

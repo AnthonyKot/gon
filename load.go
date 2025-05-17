@@ -2,22 +2,25 @@
 package main
 
 import (
-	"bufio"
-	"flag"
-	"fmt"
-	"image"
-	"image/color"
-	"image/png"
-	"io"
-	"math/rand"
-	"os"
-	"runtime"
-	"runtime/pprof"
-	"sync"
-	"time"
+   "bufio"
+   "flag"
+   "fmt"
+   "image"
+   "image/color"
+   "image/png"
+   "io"
+   "math"
+   "math/rand"
+   "os"
+   "runtime"
+   "runtime/pprof"
+   "strings"
+   "strconv"
+   "sync"
+   "time"
 
-	"gon/neuralnet"
-	"path/filepath" // Added for joining paths
+   "gon/neuralnet"
+   "path/filepath" // Added for joining paths
 )
 
 const (
@@ -787,7 +790,7 @@ func main() {
 	imgs = applyPreprocessing(imgs, trainingSetSize, preprocessMethod) // imgs is now preprocessed [][][]float64
 
 	// Now convert preprocessed images to the format expected by the neural network
-	inputs := convertImagesToInputs(imgs) // This converts [][][]float64 to [][]float32
+  inputs = convertImagesToInputs(imgs) // This converts [][][]float64 to [][]float32
 
 	to := trainingSetSize // 'to' is the end index (exclusive) for training data
 	epochs := *flagEpochs
