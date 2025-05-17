@@ -1,6 +1,9 @@
 package neuralnet
 
-import "math"
+import (
+   "fmt"
+   "math"
+)
 
 type ActivationFunction interface {
 	Activate(x float32) float32
@@ -84,4 +87,22 @@ func (t Linear) Activate(x float32) float32 {
 
 func (t Linear) Derivative(x float32) float32 {
 	return 1
+}
+
+// GetActivationFunction returns an ActivationFunction interface based on a string name.
+func GetActivationFunction(name string) (ActivationFunction, error) {
+	switch name {
+	case "relu":
+		return ReLU{}, nil
+	case "sigmoid":
+		return Sigmoid{}, nil
+	case "tanh":
+		return Tanh{}, nil
+	case "leakyrelu":
+		return NewLeakyReLU(0.01), nil // Default alpha for LeakyReLU
+	case "linear":
+		return Linear{}, nil
+	default:
+		return nil, fmt.Errorf("unknown activation function: %s", name)
+	}
 }
