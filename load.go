@@ -442,6 +442,11 @@ var (
     flagOutputActivation = flag.String("outputactivation", "linear", "activation function for output layer (relu, sigmoid, tanh, leakyrelu, linear)")
     flagDropoutRate = flag.Float64("dropoutrate", 0.0, "dropout rate for hidden layers (0.0 to disable)")
     flagBatchNorm = flag.Bool("batchnorm", false, "enable batch normalization for hidden layers")
+    // New LR scheduling flags
+    flagInitialLr   = flag.Float64("initialLr", 0.0, "Initial learning rate for warmup phase (effective if warmupSteps > 0)")
+    flagWarmupSteps = flag.Int("warmupSteps", 0, "Number of steps for learning rate warmup")
+    flagDecaySteps  = flag.Int("decaySteps", 0, "Number of steps for cosine decay (if cosine schedule is used). If 0, decays over all post-warmup steps.")
+    flagLrSchedule  = flag.String("lrSchedule", "exponential", "Learning rate schedule type: 'cosine', 'exponential', or 'none'")
 )
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
@@ -630,14 +635,26 @@ func runTrainingSession(
 	fmt.Printf("Using hidden layers: %v\n", hiddenLayerSizes)
 
 	// Create Params for this session
-	// NewParamsFull no longer takes useFloat64Calc
+	// NewParamsFull call is here, inside runTrainingSession
+	// The 'initialLR' argument to runTrainingSession is the targetLR from the -lr flag.
+	// The 'initialDecay' argument to runTrainingSession is the decay factor from the -decay flag.
+	defaultsForAdam := neuralnet.DefaultAdamParams() // Helper to get Adam defaults
+
 	currentParams := neuralnet.NewParamsFull(
-		initialLR,
-		initialDecay,
-		initialL2,
-		initialMomentum,
-		dropoutRate,
-		enableBatchNorm, // Pass enableBatchNorm to NewParamsFull
+		initialLR,      // This is TargetLr (from existing -lr flag, passed as initialLR to this func)
+		initialDecay,   // For 'exponential' schedule's per-epoch decay factor (from existing -decay flag, passed as initialDecay to this func)
+		initialL2,      // L2 regularization
+		initialMomentum,// Momentum
+		dropoutRate,    // Dropout rate
+		enableBatchNorm,// Batch norm flag
+		defaultsForAdam.Beta1, 
+		defaultsForAdam.Beta2, 
+		defaultsForAdam.EpsilonAdam,
+		// New parameters for LR scheduling, using the global flags defined in main
+		float32(*flagInitialLr),
+		*flagWarmupSteps,
+		*flagDecaySteps,
+		*flagLrSchedule,
 	)
 
 	// Use NumClasses constant and derive input size (ImageSize = D*D*Colors = 32*32*3 = 3072 for color)
